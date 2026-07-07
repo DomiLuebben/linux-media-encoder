@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.1
+Name=Linux Media Encoder
+GenericName=Media Encoder
+GenericName[de]=Medien-Encoder
+Comment=Convert video and audio with FFmpeg
+Comment[de]=Videos und Audio mit FFmpeg konvertieren
+Exec=linux-media-encoder %F
+Icon=linux-media-encoder
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;Qt;
+MimeType=video/mp4;video/x-matroska;video/quicktime;video/webm;video/x-msvideo;audio/mpeg;audio/flac;audio/x-wav;audio/ogg;image/png;image/jpeg;image/webp;image/avif;image/bmp;image/tiff;image/gif;image/heic;image/heif;image/jxl;
+Keywords=ffmpeg;convert;encode;transcode;video;audio;
+StartupNotify=true
+StartupWMClass=linux-media-encoder

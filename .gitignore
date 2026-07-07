@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+venv*/
+.venv/
+
+# Arch-Paketbau
+pkg/
+src/
+*.pkg.tar.zst
+
+# Encoder-Ausgaben aus Testläufen
+*_lme.*
+test_output.*
+temp_test_audio.wav
