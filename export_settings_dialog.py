@@ -6,17 +6,70 @@ mit Video-Vorschau, Timeline, Container/Preset-Auswahl und erweiterten Tabs.
 """
 
 import os
+import re
 import presets
-from PyQt6.QtCore import Qt, QSize, QProcess
+import styles
+from PyQt6.QtCore import Qt, QSize, QProcess, QTimer
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QComboBox, QLineEdit, QPushButton, QCheckBox, QTabWidget, QSlider,
     QFileDialog, QGroupBox, QSpinBox, QDoubleSpinBox, QDialogButtonBox,
-    QFrame
+    QFrame, QStyle
 )
-from PyQt6.QtGui import QPixmap, QFont
+from PyQt6.QtGui import QPixmap, QFont, QPainter, QColor
+
+
+class SeekSlider(QSlider):
+    """Timeline-Slider, bei dem ein Klick direkt zur Position springt
+    (statt Qt-Standard: ein PageStep in Richtung des Klicks)."""
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.maximum() > self.minimum():
+            value = QStyle.sliderValueFromPosition(
+                self.minimum(), self.maximum(),
+                round(event.position().x()), max(1, self.width()),
+            )
+            self.setValue(value)
+        super().mousePressEvent(event)
+
+
+class TrimRangeBar(QWidget):
+    """Schmale Leiste unter der Timeline, die den Export-Bereich (In/Out)
+    farbig markiert — ohne Schnitt bleibt die ganze Leiste gedimmt."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(6)
+        self._start_frac = 0.0
+        self._end_frac = 1.0
+        self._active = False
+
+    def set_trim(self, start_frac, end_frac, active):
+        self._start_frac = min(max(start_frac, 0.0), 1.0)
+        self._end_frac = min(max(end_frac, 0.0), 1.0)
+        self._active = bool(active)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        w, h = self.width(), self.height()
+        radius = h / 2
+        painter.setBrush(QColor(styles.BORDER))
+        painter.drawRoundedRect(0, 0, w, h, radius, radius)
+        if self._active and self._end_frac > self._start_frac:
+            x0 = int(self._start_frac * w)
+            x1 = max(int(self._end_frac * w), x0 + 2)
+            painter.setBrush(QColor(styles.ACCENT))
+            painter.drawRoundedRect(x0, 0, x1 - x0, h, radius, radius)
+        painter.end()
+
 
 class ExportSettingsDialog(QDialog):
+    # Feine Timeline-Auflösung: 10000 Schritte statt 100, sonst wäre bei einem
+    # einstündigen Video ein Slider-Schritt 36 Sekunden grob.
+    SLIDER_MAX = 10000
     def __init__(self, input_file, output_file, settings, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Exporteinstellungen")
@@ -70,18 +123,33 @@ class ExportSettingsDialog(QDialog):
         
         # Timeline-Steuerung (Scrubbing für Vorschau + Trim-Punkte)
         self.timeline_widget = QWidget()
-        timeline_layout = QHBoxLayout(self.timeline_widget)
+        timeline_layout = QVBoxLayout(self.timeline_widget)
         timeline_layout.setContentsMargins(0, 0, 0, 0)
-        timeline_layout.setSpacing(6)
+        timeline_layout.setSpacing(2)
 
-        self.time_slider = QSlider(Qt.Orientation.Horizontal)
-        self.time_slider.setRange(0, 100)
-        self.time_slider.setValue(18)
+        self.time_slider = SeekSlider(Qt.Orientation.Horizontal)
+        self.time_slider.setRange(0, self.SLIDER_MAX)
+        self.time_slider.setValue(int(0.18 * self.SLIDER_MAX))
+        self.time_slider.setToolTip(
+            "Klicken oder ziehen zum Springen — ←/→ = 1 s, Bild↑/↓ = 10 s.\n"
+            "I = In-Punkt setzen, O = Out-Punkt setzen."
+        )
         self.time_slider.sliderReleased.connect(self._trigger_preview_update)
         self.time_slider.valueChanged.connect(self._on_slider_value_changed)
         timeline_layout.addWidget(self.time_slider)
 
+        # Markiert den Export-Bereich (In/Out) direkt unter der Timeline
+        self.trim_range_bar = TrimRangeBar()
+        timeline_layout.addWidget(self.trim_range_bar)
+
         left_layout.addWidget(self.timeline_widget)
+
+        # Live-Vorschau beim Ziehen: debounced, damit nicht jede Zwischen-
+        # position einen eigenen ffmpeg-Aufruf auslöst.
+        self._preview_debounce = QTimer(self)
+        self._preview_debounce.setSingleShot(True)
+        self._preview_debounce.setInterval(200)
+        self._preview_debounce.timeout.connect(self._trigger_preview_update)
 
         # Timecode-Anzeige (echte Dauer aus der Quelle)
         total_dur = self.source_info.get("duration", 0.0) if self.source_info else 0.0
@@ -97,25 +165,60 @@ class ExportSettingsDialog(QDialog):
         timecode_layout.addWidget(self.lbl_total_time)
         left_layout.addWidget(self.timecode_widget)
 
-        # Trim-Steuerung: In-/Out-Punkt an der aktuellen Slider-Position setzen
+        # Trim-Steuerung: In-/Out-Punkt an der aktuellen Slider-Position setzen oder per Texteingabe
         self.trim_widget = QWidget()
-        trim_layout = QHBoxLayout(self.trim_widget)
+        trim_layout = QGridLayout(self.trim_widget)
         trim_layout.setContentsMargins(0, 0, 0, 0)
         trim_layout.setSpacing(6)
-        self.btn_set_in = QPushButton("In-Punkt setzen")
-        self.btn_set_in.setToolTip("Export beginnt an der aktuellen Timeline-Position.")
+        
+        # Reihe 0: Startzeit (In-Punkt)
+        lbl_in = QLabel("Start (In):")
+        trim_layout.addWidget(lbl_in, 0, 0)
+        
+        self.edit_trim_in = QLineEdit()
+        self.edit_trim_in.setPlaceholderText("00:00:00.000")
+        self.edit_trim_in.setMaximumWidth(120)
+        self.edit_trim_in.setToolTip("Genaue Startzeit eingeben (z. B. HH:MM:SS.mmm, MM:SS oder Sekunden)")
+        self.edit_trim_in.editingFinished.connect(self._on_trim_in_edited)
+        trim_layout.addWidget(self.edit_trim_in, 0, 1)
+        
+        self.btn_set_in = QPushButton()
+        self.btn_set_in.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        self.btn_set_in.setFixedWidth(32)
+        self.btn_set_in.setAutoDefault(False)
+        self.btn_set_in.setToolTip("Aktuelle Timeline-Position als Startzeit übernehmen (Taste I).")
         self.btn_set_in.clicked.connect(self._on_set_trim_in)
-        trim_layout.addWidget(self.btn_set_in)
-        self.btn_set_out = QPushButton("Out-Punkt setzen")
-        self.btn_set_out.setToolTip("Export endet an der aktuellen Timeline-Position.")
+        trim_layout.addWidget(self.btn_set_in, 0, 2)
+        
+        # Reihe 1: Endzeit (Out-Punkt)
+        lbl_out = QLabel("Ende (Out):")
+        trim_layout.addWidget(lbl_out, 1, 0)
+        
+        self.edit_trim_out = QLineEdit()
+        self.edit_trim_out.setPlaceholderText("00:00:00.000")
+        self.edit_trim_out.setMaximumWidth(120)
+        self.edit_trim_out.setToolTip("Genaue Endzeit eingeben (z. B. HH:MM:SS.mmm, MM:SS oder Sekunden)")
+        self.edit_trim_out.editingFinished.connect(self._on_trim_out_edited)
+        trim_layout.addWidget(self.edit_trim_out, 1, 1)
+        
+        self.btn_set_out = QPushButton()
+        self.btn_set_out.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        self.btn_set_out.setFixedWidth(32)
+        self.btn_set_out.setAutoDefault(False)
+        self.btn_set_out.setToolTip("Aktuelle Timeline-Position als Endzeit übernehmen (Taste O).")
         self.btn_set_out.clicked.connect(self._on_set_trim_out)
-        trim_layout.addWidget(self.btn_set_out)
+        trim_layout.addWidget(self.btn_set_out, 1, 2)
+        
+        # Reihe 2: Steuerung & Statusinfo
         self.btn_clear_trim = QPushButton("Schnitt aufheben")
+        self.btn_clear_trim.setAutoDefault(False)
         self.btn_clear_trim.clicked.connect(self._on_clear_trim)
-        trim_layout.addWidget(self.btn_clear_trim)
+        trim_layout.addWidget(self.btn_clear_trim, 2, 0, 1, 2)
+        
         self.lbl_trim_info = QLabel("")
         self.lbl_trim_info.setWordWrap(True)
-        trim_layout.addWidget(self.lbl_trim_info, stretch=1)
+        trim_layout.addWidget(self.lbl_trim_info, 2, 2)
+        
         left_layout.addWidget(self.trim_widget)
         self._update_trim_ui()
 
@@ -435,6 +538,11 @@ class ExportSettingsDialog(QDialog):
         btn_ok.setText("OK")
         btn_cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         btn_cancel.setText("Abbrechen")
+        # Kein Default-Button: Enter in den Timecode-Feldern soll den Wert
+        # übernehmen und NICHT den Dialog schließen bzw. Buttons auslösen.
+        for btn in (btn_ok, btn_cancel):
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
         
         right_layout.addWidget(buttons)
         
@@ -686,7 +794,87 @@ class ExportSettingsDialog(QDialog):
         )
         if not is_image:
             summary_text += f"<br>{a_sum}"
+            size_est = self._estimate_output_size()
+            if size_est:
+                summary_text += f"<br><b>Geschätzte Größe:</b> {size_est}"
         self.summary_box.setText(summary_text)
+        # Trim-Anzeige (Keyframe-Hinweis, Bereichsleiste) folgt der Codec-Wahl
+        if hasattr(self, "lbl_trim_info"):
+            self._update_trim_ui()
+
+    def _estimate_output_size(self):
+        """Schätzt die Ausgabegröße aus Bitraten bzw. anteiliger Quellgröße
+        (bei Stream-Copy). CRF-Encodes sind inhaltsabhängig — keine Schätzung."""
+        info = self.source_info or {}
+        duration = info.get("duration", 0.0) or 0.0
+        if duration <= 0:
+            return None
+
+        trim_start = presets.parse_seconds(self.settings.get("trim_start")) or 0.0
+        trim_end = presets.parse_seconds(self.settings.get("trim_end"))
+        end = min(trim_end, duration) if (trim_end and trim_end > trim_start) else duration
+        eff_duration = max(0.0, end - min(trim_start, duration))
+        if eff_duration <= 0:
+            return None
+
+        try:
+            src_size = os.path.getsize(self.input_file)
+        except OSError:
+            src_size = 0
+        src_total_bps = (src_size * 8 / duration) if src_size else 0
+        src_audio_bps = (info.get("a_bitrate") or 0) * 1000  # a_bitrate ist kbps
+        src_video_bps = max(0, src_total_bps - src_audio_bps)
+
+        v_codec = str(self.settings.get("video_codec", "libx264")).strip().lower()
+        if v_codec == "none":
+            v_bps = 0.0
+        elif v_codec == "copy":
+            if not src_total_bps:
+                return None
+            v_bps = src_video_bps
+        elif self.settings.get("encoding_mode") == "crf" or (
+            self.settings.get("crf") and not self.settings.get("video_bitrate")
+        ):
+            return None
+        else:
+            v_bps = self._bitrate_to_bps(self.settings.get("video_bitrate"))
+            if v_bps is None:
+                return None
+
+        a_codec = presets._resolve_audio_codec(self.settings).lower()
+        if a_codec == "none" or not info.get("a_codec"):
+            a_bps = 0.0
+        elif a_codec == "copy":
+            a_bps = src_audio_bps
+        else:
+            a_bps = self._bitrate_to_bps(self.settings.get("audio_bitrate"))
+            if a_bps is None:
+                return None  # z. B. FLAC ohne Bitrate: nicht seriös schätzbar
+
+        total_bytes = (v_bps + a_bps) / 8.0 * eff_duration * 1.02  # +2 % Mux-Overhead
+        if total_bytes <= 0:
+            return None
+        return "≈ " + self._format_size(total_bytes)
+
+    @staticmethod
+    def _bitrate_to_bps(value):
+        """'8M' / '192k' / '800000' → Bits pro Sekunde, sonst None."""
+        m = re.match(r"^\s*([\d.]+)\s*([kKmMgG]?)", str(value or ""))
+        if not m:
+            return None
+        try:
+            val = float(m.group(1))
+        except ValueError:
+            return None
+        return val * {"k": 1e3, "m": 1e6, "g": 1e9}.get(m.group(2).lower(), 1.0)
+
+    @staticmethod
+    def _format_size(num_bytes):
+        if num_bytes >= 1e9:
+            return f"{num_bytes / 1e9:.2f} GB"
+        if num_bytes >= 1e6:
+            return f"{num_bytes / 1e6:.1f} MB"
+        return f"{num_bytes / 1e3:.0f} kB"
 
     # --- UI INTERACTIONS ---
     def _get_container_from_format_text(self, text):
@@ -1089,10 +1277,13 @@ class ExportSettingsDialog(QDialog):
                 self._trigger_preview_update()
 
     def _on_slider_value_changed(self, value):
+        duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
         if hasattr(self, "lbl_current_time"):
-            duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
-            seek = duration * (value / 100.0)
+            seek = duration * (value / self.SLIDER_MAX)
             self.lbl_current_time.setText(self._format_timecode(seek))
+        # Live-Vorschau beim Scrubben/Tastatur-Steppen (debounced)
+        if duration > 0 and hasattr(self, "_preview_debounce"):
+            self._preview_debounce.start()
 
     def _set_preview_image(self, image_path):
         """Zeigt das übergebene Vorschaubild oder den passenden Fallback an."""
@@ -1108,7 +1299,7 @@ class ExportSettingsDialog(QDialog):
             is_audio = bool(self.source_info) and self.source_info.get("width") is None
             self.preview_label.setText("[ Nur Audio – keine Bildvorschau ]" if is_audio else "[ Video-Vorschau ]")
 
-    def _trigger_preview_update(self):
+    def _trigger_preview_update(self, seek_seconds=None):
         """Extrahiert das Vorschaubild asynchron via QProcess.
         Die frühere synchrone Variante blockierte die UI bis zu 8 Sekunden
         (Dialog-Öffnen und jede Slider-Bewegung)."""
@@ -1133,8 +1324,14 @@ class ExportSettingsDialog(QDialog):
         self._preview_temp_files.add(out_path)
 
         duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
-        slider_val = self.time_slider.value() if hasattr(self, "time_slider") else 18
-        seek = duration * (slider_val / 100.0)
+        if seek_seconds is not None:
+            seek = seek_seconds
+        else:
+            slider_val = (
+                self.time_slider.value() if hasattr(self, "time_slider")
+                else int(0.18 * self.SLIDER_MAX)
+            )
+            seek = duration * (slider_val / self.SLIDER_MAX)
 
         filters = ["scale=600:-2"]
         # Untertitel einbrennen, falls aktiviert (Vorschau des Endergebnisses)
@@ -1516,6 +1713,11 @@ class ExportSettingsDialog(QDialog):
         info = self.source_info or {}
         duration = info.get("duration", 0.0)
         self.lbl_total_time.setText(self._format_timecode(duration))
+        if duration > 0:
+            # Pfeiltasten auf dem Slider = 1 Sekunde, Bild-auf/-ab = 10 Sekunden
+            one_second = max(1, int(round(self.SLIDER_MAX / duration)))
+            self.time_slider.setSingleStep(one_second)
+            self.time_slider.setPageStep(one_second * 10)
         self._on_slider_value_changed(self.time_slider.value())
         # Ohne gespeicherte Zielgröße die Quellauflösung vorbelegen
         if not self.settings.get("width") and info.get("width") and info.get("height"):
@@ -1529,10 +1731,47 @@ class ExportSettingsDialog(QDialog):
         self._update_summary()
         self._trigger_preview_update()
 
+    def _sync_slider_to_seconds(self, seconds, duration):
+        """Bewegt den Timeline-Slider signalfrei auf die angegebene Zeit."""
+        value = int(round((seconds / duration) * self.SLIDER_MAX))
+        self.time_slider.blockSignals(True)
+        self.time_slider.setValue(max(0, min(self.SLIDER_MAX, value)))
+        self.time_slider.blockSignals(False)
+        self.lbl_current_time.setText(self._format_timecode(seconds))
+
+    def _seek_relative(self, delta_seconds):
+        """Springt auf der Timeline um delta_seconds vor/zurück (Tastatur)."""
+        duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
+        if duration <= 0:
+            return
+        target = max(0.0, min(duration, self._slider_seconds() + delta_seconds))
+        # setValue mit Signalen: aktualisiert Timecode-Label und debounced Vorschau
+        self.time_slider.setValue(int(round((target / duration) * self.SLIDER_MAX)))
+
+    def keyPressEvent(self, event):
+        """Editor-Shortcuts: I/O = In-/Out-Punkt, ←/→ = ±1 s (Shift: ±10 s).
+        Greift nur, wenn der Fokus nicht in einem Eingabefeld liegt — dort
+        behalten die Tasten ihre normale Bedeutung."""
+        focus = self.focusWidget()
+        typing = isinstance(focus, (QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox))
+        if not typing:
+            key = event.key()
+            if key == Qt.Key.Key_I:
+                self._on_set_trim_in()
+                return
+            if key == Qt.Key.Key_O:
+                self._on_set_trim_out()
+                return
+            if key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and not isinstance(focus, QSlider):
+                step = 10.0 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1.0
+                self._seek_relative(step if key == Qt.Key.Key_Right else -step)
+                return
+        super().keyPressEvent(event)
+
     # --- TRIM (In-/Out-Punkte) ---
     def _slider_seconds(self):
         duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
-        return duration * (self.time_slider.value() / 100.0)
+        return duration * (self.time_slider.value() / self.SLIDER_MAX)
 
     def _on_set_trim_in(self):
         seconds = round(self._slider_seconds(), 3)
@@ -1560,15 +1799,96 @@ class ExportSettingsDialog(QDialog):
         self._update_trim_ui()
         self._update_summary()
 
+    def _on_trim_in_edited(self):
+        text = self.edit_trim_in.text().strip()
+        duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
+        if not text:
+            self.settings.pop("trim_start", None)
+            self._update_trim_ui()
+            self._update_summary()
+            return
+        
+        seconds = self._parse_timecode(text)
+        if seconds is None or seconds < 0:
+            self._update_trim_ui()
+            return
+
+        # Nur klammern, wenn die Dauer bekannt ist — sonst würde eine gültige
+        # Eingabe auf 0 zusammenfallen (z. B. solange ffprobe noch läuft).
+        if duration > 0 and seconds > duration:
+            seconds = duration
+
+        trim_end = presets.parse_seconds(self.settings.get("trim_end"))
+        if trim_end is not None and seconds >= trim_end:
+            self.settings.pop("trim_end", None)
+            
+        self.settings["trim_start"] = round(seconds, 3)
+        self._update_trim_ui()
+        self._update_summary()
+        
+        if duration > 0:
+            self._sync_slider_to_seconds(seconds, duration)
+            self._trigger_preview_update(seek_seconds=seconds)
+
+    def _on_trim_out_edited(self):
+        text = self.edit_trim_out.text().strip()
+        duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
+        if not text:
+            self.settings.pop("trim_end", None)
+            self._update_trim_ui()
+            self._update_summary()
+            return
+            
+        seconds = self._parse_timecode(text)
+        if seconds is None or seconds <= 0:
+            self._update_trim_ui()
+            return
+
+        if duration > 0 and seconds > duration:
+            seconds = duration
+
+        trim_start = presets.parse_seconds(self.settings.get("trim_start"))
+        if trim_start is not None and seconds <= trim_start:
+            self.settings.pop("trim_start", None)
+            
+        self.settings["trim_end"] = round(seconds, 3)
+        self._update_trim_ui()
+        self._update_summary()
+        
+        if duration > 0:
+            self._sync_slider_to_seconds(seconds, duration)
+            self._trigger_preview_update(seek_seconds=seconds)
+
     def _update_trim_ui(self):
         trim_start = presets.parse_seconds(self.settings.get("trim_start"))
         trim_end = presets.parse_seconds(self.settings.get("trim_end"))
+        
+        if hasattr(self, "edit_trim_in"):
+            self.edit_trim_in.blockSignals(True)
+            self.edit_trim_in.setText(self._format_timecode(trim_start) if trim_start is not None else "")
+            self.edit_trim_in.blockSignals(False)
+            
+        if hasattr(self, "edit_trim_out"):
+            self.edit_trim_out.blockSignals(True)
+            self.edit_trim_out.setText(self._format_timecode(trim_end) if trim_end is not None else "")
+            self.edit_trim_out.blockSignals(False)
+            
         has_trim = trim_start is not None or trim_end is not None
         self.btn_clear_trim.setEnabled(has_trim)
+        duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
+
+        # Export-Bereich auf der Timeline markieren
+        if hasattr(self, "trim_range_bar"):
+            if has_trim and duration > 0:
+                start_frac = (trim_start or 0.0) / duration
+                end_frac = (trim_end / duration) if trim_end is not None else 1.0
+                self.trim_range_bar.set_trim(start_frac, end_frac, True)
+            else:
+                self.trim_range_bar.set_trim(0.0, 1.0, False)
+
         if not has_trim:
             self.lbl_trim_info.setText("Kein Schnitt — es wird die komplette Quelle exportiert.")
             return
-        duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
         start = trim_start or 0.0
         end = trim_end if trim_end is not None else duration
         parts = [
@@ -1577,6 +1897,10 @@ class ExportSettingsDialog(QDialog):
         ]
         if end and end > start:
             parts.append(f"(Dauer {self._format_timecode(end - start)})")
+        # Stream-Kopie schneidet nur an Keyframes — dem User sagen, warum der
+        # Clip ggf. etwas früher beginnt als eingegeben.
+        if start > 0 and str(self.settings.get("video_codec", "")).strip().lower() == "copy":
+            parts.append("— verlustfrei: beginnt am Keyframe vor dem In-Punkt")
         self.lbl_trim_info.setText(" ".join(parts))
 
     def done(self, result):
@@ -1599,13 +1923,46 @@ class ExportSettingsDialog(QDialog):
 
     @staticmethod
     def _format_timecode(seconds):
-        """Formatiert Sekunden als HH:MM:SS:FF-ähnlichen Timecode (hier HH:MM:SS.ms)."""
+        """Formatiert Sekunden als HH:MM:SS.ms (mit Millisekunden-Genauigkeit)."""
         if not seconds or seconds <= 0:
-            return "00:00:00"
+            return "00:00:00.000"
         h = int(seconds // 3600)
         m = int((seconds % 3600) // 60)
         s = int(seconds % 60)
-        return f"{h:02d}:{m:02d}:{s:02d}"
+        ms = int(round((seconds - int(seconds)) * 1000))
+        if ms >= 1000:
+            s += 1
+            ms -= 1000
+            if s >= 60:
+                s -= 60
+                m += 1
+                if m >= 60:
+                    m -= 60
+                    h += 1
+        return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+    @staticmethod
+    def _parse_timecode(text):
+        """Parst einen Timecode-String (HH:MM:SS.mmm, MM:SS.mmm, oder Sekunden) in Sekunden."""
+        text = text.strip()
+        if not text or "-" in text:
+            return None
+        try:
+            if ":" in text:
+                parts = text.split(":")
+                if len(parts) == 3:
+                    h = int(parts[0])
+                    m = int(parts[1])
+                    s = float(parts[2])
+                    return h * 3600 + m * 60 + s
+                elif len(parts) == 2:
+                    m = int(parts[0])
+                    s = float(parts[1])
+                    return m * 60 + s
+                return None
+            return float(text)
+        except ValueError:
+            return None
 
     def _on_intelligent_mode_clicked(self):
         """Öffnet den Intelligenten Bitraten-Rechner Dialog."""

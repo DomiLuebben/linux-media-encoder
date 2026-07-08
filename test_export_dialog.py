@@ -131,5 +131,125 @@ class PresetLabelTest(unittest.TestCase):
         self.assertEqual(presets.preset_label(settings), "Benutzerdefiniert")
 
 
+class TrimAndPresetsTest(unittest.TestCase):
+    def test_timecode_formatting(self):
+        # Format seconds as HH:MM:SS.mmm
+        self.assertEqual(ExportSettingsDialog._format_timecode(0), "00:00:00.000")
+        self.assertEqual(ExportSettingsDialog._format_timecode(65.5), "00:01:05.500")
+        self.assertEqual(ExportSettingsDialog._format_timecode(3600.005), "01:00:00.005")
+        self.assertEqual(ExportSettingsDialog._format_timecode(59.9999), "00:01:00.000")
+
+    def test_timecode_parsing(self):
+        # Parse different formats into seconds
+        self.assertEqual(ExportSettingsDialog._parse_timecode("00:01:05.500"), 65.5)
+        self.assertEqual(ExportSettingsDialog._parse_timecode("01:05.5"), 65.5)
+        self.assertEqual(ExportSettingsDialog._parse_timecode("65.5"), 65.5)
+        self.assertEqual(ExportSettingsDialog._parse_timecode("  00:00:10   "), 10.0)
+        self.assertIsNone(ExportSettingsDialog._parse_timecode("invalid"))
+        self.assertIsNone(ExportSettingsDialog._parse_timecode(""))
+        # Negative Komponenten und zu viele Doppelpunkte sind ungültig
+        self.assertIsNone(ExportSettingsDialog._parse_timecode("-5"))
+        self.assertIsNone(ExportSettingsDialog._parse_timecode("5:-30"))
+        self.assertIsNone(ExportSettingsDialog._parse_timecode("1:2:3:4"))
+
+    def test_ffmpeg_args_copy_seeking(self):
+        # Lossless copy cut: should place -ss and -t before -i
+        settings = {
+            "container": "mkv",
+            "video_codec": "copy",
+            "audio_codec": "copy",
+            "trim_start": "5.0",
+            "trim_end": "12.5"
+        }
+        args = presets.get_ffmpeg_args("input.mp4", "output.mkv", settings)
+        
+        # Verify sequence: ss and t should appear before -i
+        idx_ss = args.index("-ss")
+        idx_t = args.index("-t")
+        idx_i = args.index("-i")
+        
+        self.assertTrue(idx_ss < idx_i)
+        self.assertTrue(idx_t < idx_i)
+        self.assertEqual(args[idx_ss + 1], "5.000")
+        self.assertEqual(args[idx_t + 1], "7.500")
+        # Verschobene Timestamps beim Copy-Cut normalisieren
+        self.assertIn("-avoid_negative_ts", args)
+        self.assertGreater(args.index("-avoid_negative_ts"), idx_i)
+
+        # Re-encoding: -ss and -to should appear after -i
+        settings_enc = {
+            "container": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "trim_start": "5.0",
+            "trim_end": "12.5"
+        }
+        args_enc = presets.get_ffmpeg_args("input.mp4", "output.mp4", settings_enc)
+        idx_ss_enc = args_enc.index("-ss")
+        idx_to_enc = args_enc.index("-to")
+        idx_i_enc = args_enc.index("-i")
+
+        self.assertTrue(idx_i_enc < idx_ss_enc)
+        self.assertTrue(idx_i_enc < idx_to_enc)
+        self.assertNotIn("-avoid_negative_ts", args_enc)
+
+    def test_video_copy_with_audio_encode_uses_input_seeking(self):
+        # Output-Seeking mit -c:v copy würde mitten in die GOP schneiden
+        # (Bildfehler bis zum nächsten Keyframe) — auch bei Audio-Re-Encode
+        # oder ohne Audio muss deshalb Input-Seeking verwendet werden.
+        for audio in ("aac", "none"):
+            settings = {
+                "container": "mp4",
+                "video_codec": "copy",
+                "audio_codec": audio,
+                "trim_start": "5.0",
+                "trim_end": "12.5",
+            }
+            args = presets.get_ffmpeg_args("input.mp4", "output.mp4", settings)
+            self.assertLess(args.index("-ss"), args.index("-i"), f"audio={audio}")
+            self.assertIn("-t", args, f"audio={audio}")
+            self.assertNotIn("-to", args, f"audio={audio}")
+
+    def test_audio_only_copy_uses_input_seeking(self):
+        settings = {
+            "container": "mkv",
+            "video_codec": "none",
+            "audio_codec": "copy",
+            "trim_start": "3.0",
+        }
+        args = presets.get_ffmpeg_args("input.mp4", "output.mkv", settings)
+        self.assertLess(args.index("-ss"), args.index("-i"))
+
+    def test_trim_label(self):
+        self.assertEqual(presets.trim_label({}), "")
+        self.assertEqual(presets.trim_label({"trim_start": 5, "trim_end": 90}), "0:05–1:30")
+        self.assertEqual(presets.trim_label({"trim_start": 5}), "0:05–Ende")
+        self.assertEqual(presets.trim_label({"trim_end": 3700}), "0:00–1:01:40")
+        # Ende vor Start wird von get_ffmpeg_args verworfen -> nur Start anzeigen
+        self.assertEqual(presets.trim_label({"trim_start": 60, "trim_end": 10}), "1:00–Ende")
+        self.assertEqual(presets.trim_label({"trim_start": 0, "trim_end": 0}), "")
+
+    def test_bitrate_and_size_helpers(self):
+        self.assertEqual(ExportSettingsDialog._bitrate_to_bps("8M"), 8e6)
+        self.assertEqual(ExportSettingsDialog._bitrate_to_bps("192k"), 192e3)
+        self.assertEqual(ExportSettingsDialog._bitrate_to_bps("800000"), 800000.0)
+        self.assertIsNone(ExportSettingsDialog._bitrate_to_bps("Source / CRF"))
+        self.assertIsNone(ExportSettingsDialog._bitrate_to_bps(""))
+        self.assertEqual(ExportSettingsDialog._format_size(2_500_000), "2.5 MB")
+        self.assertEqual(ExportSettingsDialog._format_size(1_250_000_000), "1.25 GB")
+        self.assertEqual(ExportSettingsDialog._format_size(50_000), "50 kB")
+
+    def test_copy_without_trim_has_no_seek_args(self):
+        settings = {
+            "container": "mkv",
+            "video_codec": "copy",
+            "audio_codec": "copy",
+        }
+        args = presets.get_ffmpeg_args("input.mp4", "output.mkv", settings)
+        self.assertNotIn("-ss", args)
+        self.assertNotIn("-t", args)
+        self.assertNotIn("-avoid_negative_ts", args)
+
+
 if __name__ == "__main__":
     unittest.main()

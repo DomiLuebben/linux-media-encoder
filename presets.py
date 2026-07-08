@@ -819,6 +819,19 @@ def get_audio_codec_labels(container, custom=False):
     return [audio_codec_to_label(codec) for codec in get_audio_codec_options(container, custom)]
 
 
+def _resolve_audio_codec(settings):
+    """Audio-Codec aus den Settings (Label oder Kurzname) als FFmpeg-Encoder-Name."""
+    a_codec = str(audio_label_to_codec(settings.get("audio_codec", "aac"))).strip()
+    return {
+        "aac": "aac",
+        "mp3": "libmp3lame",
+        "opus": "libopus",
+        "flac": "flac",
+        "copy": "copy",
+        "none": "none",
+    }.get(a_codec.lower(), a_codec)
+
+
 def _scale_bitrate(bitrate, factor):
     """Skaliert eine FFmpeg-Bitrate-Angabe wie '8M' oder '800k' um den Faktor.
     Gibt einen FFmpeg-tauglichen String mit derselben Einheit zurück."""
@@ -852,6 +865,27 @@ def parse_seconds(value):
     except (TypeError, ValueError):
         return None
     return sec if sec >= 0 else None
+
+
+def _format_trim_seconds(sec):
+    sec = int(round(sec))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def trim_label(settings):
+    """Kompakte Schnitt-Anzeige für die Queue ('0:05–1:30'), '' ohne Schnitt.
+    Spiegelt, welche Trim-Werte get_ffmpeg_args tatsächlich anwendet."""
+    start = parse_seconds(settings.get("trim_start"))
+    end = parse_seconds(settings.get("trim_end"))
+    has_start = start is not None and start > 0
+    has_end = end is not None and end > 0 and (start is None or end > start)
+    if not has_start and not has_end:
+        return ""
+    start_txt = _format_trim_seconds(start if has_start else 0)
+    end_txt = _format_trim_seconds(end) if has_end else "Ende"
+    return f"{start_txt}–{end_txt}"
 
 
 def format_mbps(value):
@@ -890,22 +924,47 @@ def get_ffmpeg_args(input_file, output_file, settings):
     )
 
     # -y überschreibt die Ausgabedatei automatisch
-    args = ["-y", "-i", input_file]
-    if soft_subtitle:
-        args.extend(["-i", temp_srt_path])
-
     # --- BILD-EXPORT (Einzelbild statt Video/Audio-Streams) ---
     if container in IMAGE_CONTAINERS:
         return _get_image_args(input_file, output_file, settings)
 
-    # Schnittmarken (In/Out) als Output-Optionen: frame-genau, und die
+    # Cut-Strategie: Wird der Videostream 1:1 kopiert (oder gibt es nur eine
+    # kopierte Audiospur), schneidet Input-Seeking (-ss/-t vor -i) verlustfrei,
+    # schnell und keyframe-sauber. Output-Seeking (-ss/-to nach -i) würde bei
+    # Stream-Copy mitten in die GOP schneiden (Bildfehler bis zum nächsten
+    # Keyframe). Beim Re-Encoding bleibt Output-Seeking frame-genau, und die
     # Timestamps bleiben unverändert (wichtig für Untertitel-Synchronität).
+    v_lower = str(settings.get("video_codec", "libx264")).strip().lower()
+    a_lower = _resolve_audio_codec(settings).lower()
+    is_copy_cut = (
+        not soft_subtitle
+        and not hard_subtitle
+        and (v_lower == "copy" or (v_lower == "none" and a_lower == "copy"))
+    )
+
+    args = ["-y"]
     trim_start = parse_seconds(settings.get("trim_start"))
     trim_end = parse_seconds(settings.get("trim_end"))
-    if trim_start is not None and trim_start > 0:
-        args.extend(["-ss", f"{trim_start:.3f}"])
-    if trim_end is not None and trim_end > 0 and (trim_start is None or trim_end > trim_start):
-        args.extend(["-to", f"{trim_end:.3f}"])
+
+    if is_copy_cut:
+        if trim_start is not None and trim_start > 0:
+            args.extend(["-ss", f"{trim_start:.3f}"])
+        if trim_end is not None and trim_end > 0 and (trim_start is None or trim_end > trim_start):
+            duration = trim_end - (trim_start or 0.0)
+            args.extend(["-t", f"{duration:.3f}"])
+        args.extend(["-i", input_file])
+        if trim_start is not None and trim_start > 0:
+            # Kopierte Pakete vor dem Seek-Punkt bekämen negative Timestamps —
+            # auf 0 verschieben, sonst stolpern MP4-/MKV-Muxer und manche Player.
+            args.extend(["-avoid_negative_ts", "make_zero"])
+    else:
+        args.extend(["-i", input_file])
+        if soft_subtitle:
+            args.extend(["-i", temp_srt_path])
+        if trim_start is not None and trim_start > 0:
+            args.extend(["-ss", f"{trim_start:.3f}"])
+        if trim_end is not None and trim_end > 0 and (trim_start is None or trim_end > trim_start):
+            args.extend(["-to", f"{trim_end:.3f}"])
 
     # Video-Konfiguration
     v_codec = str(settings.get("video_codec", "libx264")).strip()
@@ -918,15 +977,7 @@ def get_ffmpeg_args(input_file, output_file, settings):
 
     # Stream-Mapping bei Soft-Untertitelung (um korrekte Spurenzuweisung zu garantieren)
     if soft_subtitle:
-        a_codec = str(audio_label_to_codec(settings.get("audio_codec", "aac"))).strip()
-        a_codec = {
-            "aac": "aac",
-            "mp3": "libmp3lame",
-            "opus": "libopus",
-            "flac": "flac",
-            "copy": "copy",
-            "none": "none",
-        }.get(a_codec.lower(), a_codec)
+        a_codec = _resolve_audio_codec(settings)
 
         if v_codec != "none":
             # 0:V (groß) = echte Videostreams ohne Cover-Art/attached_pic —
@@ -1014,15 +1065,7 @@ def get_ffmpeg_args(input_file, output_file, settings):
                 args.extend(["-vf", ",".join(vf_filters)])
 
     # Audio-Konfiguration
-    a_codec = str(audio_label_to_codec(settings.get("audio_codec", "aac"))).strip()
-    a_codec = {
-        "aac": "aac",
-        "mp3": "libmp3lame",
-        "opus": "libopus",
-        "flac": "flac",
-        "copy": "copy",
-        "none": "none",
-    }.get(a_codec.lower(), a_codec)
+    a_codec = _resolve_audio_codec(settings)
     # Verlustfreie / PCM-Codecs ignorieren bzw. verweigern eine Bitrate-Angabe.
     lossless_audio = a_codec in ("flac", "alac", "pcm_s16le", "pcm_s24le", "wavpack")
     if a_codec == "none":

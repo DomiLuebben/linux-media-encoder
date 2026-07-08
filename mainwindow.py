@@ -7,7 +7,7 @@ mit bidirektional synchronisierten Bitraten-Schiebereglern.
 
 import json
 import os
-from PyQt6.QtCore import Qt, QSize, QSettings, QProcess, QTimer, QUrl
+from PyQt6.QtCore import Qt, QSize, QSettings, QProcess, QTimer, QUrl, pyqtSlot
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox, QLineEdit,
@@ -118,6 +118,11 @@ class MainWindow(QMainWindow):
         exit_action = QAction("Beenden", self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        edit_menu = menubar.addMenu("Bearbeiten")
+        trim_menu_action = QAction("Video verkürzen (Schnitt)...", self)
+        trim_menu_action.triggered.connect(self._on_trim_video_clicked)
+        edit_menu.addAction(trim_menu_action)
         
         theme_menu = menubar.addMenu("Design")
         theme_group = QActionGroup(self)
@@ -193,6 +198,13 @@ class MainWindow(QMainWindow):
         self.action_add.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
         self.action_add.setToolTip("Dateien zur Warteschlange hinzufügen")
         self.toolbar.addAction(self.action_add)
+
+        # Trim-Button
+        self.action_trim = QAction("Video verkürzen", self)
+        self.action_trim.triggered.connect(self._on_trim_video_clicked)
+        self.action_trim.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaSeekForward))
+        self.action_trim.setToolTip("Video verkürzen (Start-/Endpunkt setzen & Codec wählen)")
+        self.toolbar.addAction(self.action_trim)
         
         # Remove-Button
         self.action_remove = QAction("Löschen", self)
@@ -862,11 +874,13 @@ class MainWindow(QMainWindow):
             item.setForeground(QColor(color))
         else:
             item.setData(Qt.ItemDataRole.ForegroundRole, None)
-        # Fehlerdetails direkt an der Zeile verfügbar machen
+        # Fehlerdetails bzw. Schnellzugriff direkt an der Zeile verfügbar machen
         if job["status"] == "Fehlgeschlagen" and job.get("error_tail"):
             item.setToolTip(
                 "Doppelklick für Details.\n\nLetzte FFmpeg-Meldungen:\n" + job["error_tail"]
             )
+        elif job["status"] == "Fertig":
+            item.setToolTip("Doppelklick: Ausgabedatei abspielen")
         else:
             item.setToolTip("")
 
@@ -878,10 +892,15 @@ class MainWindow(QMainWindow):
 
         settings = job.get("settings", {})
         preset_name = presets.preset_label(settings)
+        # Beschnittene Jobs in der Queue kenntlich machen, damit niemand
+        # versehentlich gekürzt exportiert.
+        trim = presets.trim_label(settings)
+        preset_text = f"{preset_name} · {trim}" if trim else preset_name
+        preset_tip = f"{preset_name}\nSchnitt: {trim}" if trim else preset_name
         cells = [
             (1, presets.format_label(settings),
              f"{settings.get('container', '')}".upper() + " — klicken für Exporteinstellungen"),
-            (2, preset_name, preset_name),
+            (2, preset_text, preset_tip),
             (3, os.path.basename(job["output_file"]), job["output_file"]),
         ]
         for col, text, tooltip in cells:
@@ -950,12 +969,15 @@ class MainWindow(QMainWindow):
 
     def _on_table_cell_double_clicked(self, row, column):
         """Öffnet den Export-Settings-Dialog bei Doppelklick auf eine Zeile.
-        Doppelklick auf den Status eines fehlgeschlagenen Jobs zeigt stattdessen
-        die FFmpeg-Fehlerdetails."""
+        Doppelklick auf den Status zeigt bei fehlgeschlagenen Jobs die
+        FFmpeg-Fehlerdetails und spielt bei fertigen Jobs die Ausgabedatei ab."""
         if column == 4 and 0 <= row < len(self.jobs):
             job = self.jobs[row]
             if job["status"] == "Fehlgeschlagen" and job.get("error_tail"):
                 self._show_error_details(row)
+                return
+            if job["status"] == "Fertig" and os.path.exists(job["output_file"]):
+                QDesktopServices.openUrl(QUrl.fromLocalFile(job["output_file"]))
                 return
         self._open_export_settings_dialog_for_row(row)
 
@@ -2042,6 +2064,26 @@ class MainWindow(QMainWindow):
         for path in file_paths:
             self._add_file_to_queue(path)
 
+    def _on_trim_video_clicked(self):
+        """Öffnet den Schnittbereich für den aktuell ausgewählten Video-Job."""
+        row = self.queue_table.currentRow()
+        if row < 0 or row >= len(self.jobs):
+            QMessageBox.information(
+                self, "Video verkürzen",
+                "Bitte wählen Sie zuerst einen Video-Job in der Warteschlange aus."
+            )
+            return
+        job = self.jobs[row]
+        if presets.is_image_input(job.get("input_file")):
+            QMessageBox.information(
+                self, "Video verkürzen",
+                "Die Verkürzung steht nur für Video- oder Audio-Jobs zur Verfügung."
+            )
+            return
+        if self._job_is_busy(job):
+            return
+        self._open_export_settings_dialog_for_row(row)
+
     def _selected_job_rows(self):
         """Alle selektierten Zeilenindizes (aufsteigend)."""
         rows = sorted({index.row() for index in self.queue_table.selectionModel().selectedRows()})
@@ -2091,6 +2133,8 @@ class MainWindow(QMainWindow):
         act_start.setEnabled(not self.is_running and not busy)
         act_duplicate = menu.addAction("Job duplizieren")
         act_duplicate.setEnabled(not busy)
+        act_trim = menu.addAction("Video verkürzen (Schnitt)...")
+        act_trim.setEnabled(not busy and not presets.is_image_input(job.get("input_file")))
         menu.addSeparator()
         act_up = menu.addAction("Nach oben")
         act_up.setEnabled(not self.is_running and row > 0)
@@ -2112,6 +2156,8 @@ class MainWindow(QMainWindow):
             self._start_single_job(row)
         elif chosen == act_duplicate:
             self._duplicate_job(row)
+        elif chosen == act_trim:
+            self._open_export_settings_dialog_for_row(row)
         elif chosen == act_up:
             self._move_job(row, -1)
         elif chosen == act_down:
@@ -2379,8 +2425,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{restored} Job(s) aus der letzten Sitzung wiederhergestellt.")
 
     # --- BENACHRICHTIGUNG & ENERGIE-AKTION ---
-    def _notify(self, title, body):
-        """Desktop-Benachrichtigung (DBus, Fallback notify-send, sonst still)."""
+    def _notify(self, title, body, folder=None):
+        """Desktop-Benachrichtigung (DBus, Fallback notify-send, sonst still).
+        Mit folder bekommt die Benachrichtigung einen "Ordner öffnen"-Button
+        (nur über DBus möglich; der notify-send-Fallback bleibt ohne Aktion)."""
         try:
             from PyQt6.QtDBus import QDBusInterface
             iface = QDBusInterface(
@@ -2388,15 +2436,47 @@ class MainWindow(QMainWindow):
                 "org.freedesktop.Notifications",
             )
             if iface.isValid():
+                actions = []
+                if folder and self._connect_notification_actions():
+                    actions = ["open-folder", "Ordner öffnen"]
                 reply = iface.call(
                     "Notify", "Linux Media Encoder", 0, "linux-media-encoder",
-                    title, body, [], {}, 8000,
+                    title, body, actions, {}, 8000,
                 )
                 if reply.errorName() == "":
+                    if actions:
+                        try:
+                            notify_id = int(reply.arguments()[0])
+                            self._notify_folder_by_id[notify_id] = folder
+                        except (IndexError, TypeError, ValueError):
+                            pass
                     return
         except Exception:
             pass
         QProcess.startDetached("notify-send", ["-a", "Linux Media Encoder", title, body])
+
+    def _connect_notification_actions(self):
+        """Lauscht (einmalig) auf ActionInvoked des Notification-Daemons."""
+        if getattr(self, "_notify_signal_connected", None) is not None:
+            return self._notify_signal_connected
+        self._notify_folder_by_id = {}
+        try:
+            from PyQt6.QtDBus import QDBusConnection
+            self._notify_signal_connected = bool(QDBusConnection.sessionBus().connect(
+                "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications", "ActionInvoked",
+                self._on_notification_action,
+            ))
+        except Exception:
+            self._notify_signal_connected = False
+        return self._notify_signal_connected
+
+    @pyqtSlot(int, str)
+    def _on_notification_action(self, notification_id, action_key):
+        """Der Daemon meldet Aktionen ALLER Apps — nur auf unsere IDs reagieren."""
+        folder = getattr(self, "_notify_folder_by_id", {}).pop(int(notification_id), None)
+        if folder and action_key == "open-folder" and os.path.isdir(folder):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _selected_power_action(self):
         for key, action in getattr(self, "power_actions", {}).items():
@@ -2488,7 +2568,11 @@ class MainWindow(QMainWindow):
             body = f"{done} Job(s) fertig"
             if failed:
                 body += f", {failed} fehlgeschlagen"
-            self._notify("Warteschlange abgeschlossen", body)
+            folder = next(
+                (os.path.dirname(j["output_file"]) for j in self.jobs if j["status"] == "Fertig"),
+                None,
+            )
+            self._notify("Warteschlange abgeschlossen", body, folder=folder)
             self._update_ui_state()
             self._maybe_run_power_action()
             return
@@ -2893,6 +2977,8 @@ class MainWindow(QMainWindow):
         self.action_add.setEnabled(not self.is_running)
         self.action_remove.setEnabled(not self.is_running and has_jobs)
         self.action_clear.setEnabled(not self.is_running and has_jobs)
+        if hasattr(self, "action_trim"):
+            self.action_trim.setEnabled(not self.is_running and has_jobs)
         
         btn_start = self.findChild(QPushButton, "btn_start")
         btn_stop = self.findChild(QPushButton, "btn_stop")

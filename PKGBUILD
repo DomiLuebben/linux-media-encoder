@@ -1,7 +1,7 @@
 # Maintainer: Dominik Lübben <dominikluebben@googlemail.com>
 pkgname=linux-media-encoder
 # Version auch in version.py pflegen (Single Source für die App selbst)
-pkgver=1.7.0
+pkgver=1.8.0
 pkgrel=1
 pkgdesc="GUI-Medien-Encoder für FFmpeg im Stil des Adobe Media Encoder (PyQt6)"
 arch=('any')
