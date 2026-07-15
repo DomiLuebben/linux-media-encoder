@@ -548,9 +548,9 @@ TRANSIENT_SETTING_KEYS = (
     "_subtitle_source_srt",
 )
 
-# Quellbezogene Einstellungen (Zuschnitt, Schnittmarken): gelten nur für die
-# jeweilige Quelldatei und werden nie auf andere Jobs kopiert.
-SOURCE_SETTING_KEYS = ("crop", "trim_start", "trim_end")
+# Quellbezogene Einstellungen (Zuschnitt, Drehung, Schnittmarken): gelten nur
+# für die jeweilige Quelldatei und werden nie auf andere Jobs kopiert.
+SOURCE_SETTING_KEYS = ("crop", "rotate", "trim_start", "trim_end")
 
 # Als Bild-Quelle akzeptierte Dateiendungen (für Default-Preset bei Drag & Drop)
 IMAGE_INPUT_EXTENSIONS = {
@@ -701,10 +701,46 @@ def get_crop(settings):
     return {"x": x, "y": y, "w": w, "h": h}
 
 
+# Erlaubte Drehwinkel (im Uhrzeigersinn) für den Bild-Dreh-Workflow.
+ROTATE_ANGLES = (0, 90, 180, 270)
+
+# FFmpeg-Filterausdruck je Drehwinkel; 0° braucht keinen Filter.
+_ROTATE_FILTERS = {
+    90: "transpose=1",   # 90° im Uhrzeigersinn
+    180: "hflip,vflip",  # 180°: horizontal + vertikal spiegeln
+    270: "transpose=2",  # 90° gegen den Uhrzeigersinn
+}
+
+
+def get_rotation(settings):
+    """Validierter Drehwinkel aus den Settings (0/90/180/270), Default 0."""
+    try:
+        angle = int((settings or {}).get("rotate", 0)) % 360
+    except (TypeError, ValueError):
+        return 0
+    return angle if angle in ROTATE_ANGLES else 0
+
+
+def rotate_filter(angle):
+    """FFmpeg-Filterausdruck für den gegebenen Drehwinkel, oder None für 0°."""
+    return _ROTATE_FILTERS.get(angle)
+
+
 def build_scale_filter(width, height, mode, even_dimensions=False):
     """FFmpeg-scale-Filter für den gewählten Modus. even_dimensions erzwingt
     gerade Kantenlängen (Pflicht für yuv420p-Video-Codecs wie x264/x265)."""
+    def even_value(value):
+        try:
+            ivalue = int(value)
+        except (TypeError, ValueError):
+            text = str(value).strip()
+            return f"trunc(({text})/2)*2" if text else text
+        return str(max(2, ivalue - (ivalue % 2)))
+
     if mode == SCALE_MODE_STRETCH:
+        if even_dimensions:
+            width = even_value(width)
+            height = even_value(height)
         return f"scale={width}:{height}"
     fit = f"scale={width}:{height}:force_original_aspect_ratio=decrease"
     if even_dimensions:
@@ -890,9 +926,84 @@ def trim_label(settings):
 
 def format_mbps(value):
     value = float(value)
+    if 0 < value < 0.1:
+        # Der intelligente Rechner kann bei sehr langen Dateien unter 0,1
+        # Mbps landen. Als kbit/s bleibt der Wert präzise und wird nicht zu
+        # einem ungültigen "0.0M" gerundet.
+        kbps = value * 1000.0
+        num = f"{int(round(kbps))}" if abs(kbps - round(kbps)) < 1e-6 else f"{kbps:g}"
+        return f"{num}k"
     if abs(value - round(value)) < 1e-6:
         return f"{int(round(value))}M"
     return f"{value:.1f}M"
+
+
+def bitrate_to_mbps(value, default=None):
+    """Wandelt FFmpeg-Bitratenangaben in Mbps für die UI um."""
+    m = re.match(r"^\s*([\d.]+)\s*([kKmMgG]?)\s*$", str(value or ""))
+    if not m:
+        return default
+    try:
+        number = float(m.group(1))
+    except ValueError:
+        return default
+    unit = m.group(2).lower()
+    if unit == "k":
+        return number / 1000.0
+    if unit == "m":
+        return number
+    if unit == "g":
+        return number * 1000.0
+    # Ohne Einheit meint FFmpeg Bits/s. Kleine Werte stammen aber oft aus alten
+    # UI-Settings und waren als Mbps gemeint.
+    return number / 1_000_000.0 if number >= 10000 else number
+
+
+def quick_preset_settings(name):
+    """Vollständige Settings für die kurzen Preset-Namen im Dropdown."""
+    if name == "YouTube 1080p HD":
+        return {
+            "container": "mp4",
+            "video_codec": "libx264",
+            "video_bitrate": "16M",
+            "crf": "",
+            "audio_codec": "aac",
+            "audio_bitrate": "192k",
+            "encoding_mode": "vbr",
+            "width": 1920,
+            "height": 1080,
+            "fps": "30",
+            "profile": "High",
+            "scale_mode": SCALE_MODE_FIT,
+            "match_source": False,
+        }
+    if name == "YouTube 720p HD":
+        return {
+            "container": "mp4",
+            "video_codec": "libx264",
+            "video_bitrate": "8M",
+            "crf": "",
+            "audio_codec": "aac",
+            "audio_bitrate": "192k",
+            "encoding_mode": "vbr",
+            "width": 1280,
+            "height": 720,
+            "fps": "30",
+            "profile": "High",
+            "scale_mode": SCALE_MODE_FIT,
+            "match_source": False,
+        }
+    if name == "Hocheffizient (CRF 23)":
+        settings = dict(PRESETS["MP4 (H.265 / AAC) - Hocheffizient (CRF 23)"])
+        settings["encoding_mode"] = "crf"
+        settings.setdefault("scale_mode", SCALE_MODE_FIT)
+        settings["match_source"] = False
+        return settings
+    if name == "Stream-Kopie (Verlustfrei)":
+        settings = dict(PRESETS["1:1 Kopie (Stream-Copy)"])
+        settings["encoding_mode"] = "copy"
+        return settings
+    return None
 
 
 def get_ffmpeg_args(input_file, output_file, settings):
@@ -1023,9 +1134,17 @@ def get_ffmpeg_args(input_file, output_file, settings):
             v_bitrate = settings.get("video_bitrate", "")
 
             # Encoding-Modus: explizit ("crf"/"cbr"/"vbr") oder aus den Werten abgeleitet.
-            mode = settings.get("encoding_mode", "")
-            if not mode:
-                mode = "crf" if (crf and _is_number(crf)) else "vbr"
+            mode = str(settings.get("encoding_mode", "") or "").strip().lower()
+            crf_capable = v_codec in (
+                "libx264", "libx265", "libvpx-vp9", "libsvtav1", "libaom-av1",
+            ) or v_codec in NVENC_CODECS
+            if mode not in ("crf", "cbr", "vbr"):
+                if crf and _is_number(crf):
+                    mode = "crf"
+                elif v_bitrate and v_bitrate != "Source / CRF":
+                    mode = "vbr"
+                else:
+                    mode = "crf" if crf_capable else "vbr"
 
             if mode == "crf":
                 # Ungültige/leere CRF-Werte fallen auf 23 zurück, statt den Job
@@ -1166,6 +1285,12 @@ def _get_image_args(input_file, output_file, settings):
     args = ["-y", "-i", input_file, "-frames:v", "1", "-an"]
 
     vf_filters = []
+
+    # Drehung zuerst anwenden: Der Zuschnitt aus der Vorschau bezieht sich auf
+    # das dort bereits gedrehte Bild, muss also im Filterchain danach kommen.
+    rotate_expr = rotate_filter(get_rotation(settings))
+    if rotate_expr:
+        vf_filters.append(rotate_expr)
 
     # Optionaler Zuschnitt (aus der interaktiven Bildvorschau), vor der Skalierung
     crop = get_crop(settings)

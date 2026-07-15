@@ -106,6 +106,14 @@ class FFmpegArgsTest(unittest.TestCase):
 
         self.assertEqual(args[args.index("-vf") + 1], "scale=1920:1080")
 
+    def test_video_stretch_makes_odd_yuv420p_dimensions_even(self):
+        settings = dict(presets.PRESETS["MP4 (H.264 / AAC) - Standard 1080p"])
+        settings.update({"scale_mode": "stretch", "width": 1919, "height": 1079})
+
+        args = presets.get_ffmpeg_args("input.mp4", "output.mp4", settings)
+
+        self.assertEqual(args[args.index("-vf") + 1], "scale=1918:1078")
+
     def test_video_scale_mode_source_skips_scaling(self):
         settings = dict(presets.PRESETS["MP4 (H.264 / AAC) - Standard 1080p"])
         settings["scale_mode"] = "source"
@@ -274,6 +282,8 @@ class FFmpegArgsTest(unittest.TestCase):
 
             self.assertEqual(args[args.index("-c:v") + 1], "libvpx-vp9")
             self.assertNotIn("libx264", args)
+            self.assertEqual(args[args.index("-crf") + 1], "23")
+            self.assertEqual(args[args.index("-b:v") + 1], "0")
             self.assertIn("-vf", args)
             self.assertIn("subtitles=filename=", args[args.index("-vf") + 1])
         finally:
@@ -452,6 +462,30 @@ class PresetLabelTest(unittest.TestCase):
             presets.format_option_for_settings({"container": "mp4", "video_codec": "libx265"}),
             "HEVC / H.265 (MP4)",
         )
+
+
+class UiHelperTest(unittest.TestCase):
+    def test_bitrate_to_mbps_parses_ffmpeg_units(self):
+        self.assertEqual(presets.bitrate_to_mbps("8M"), 8.0)
+        self.assertEqual(presets.bitrate_to_mbps("8000k"), 8.0)
+        self.assertEqual(presets.bitrate_to_mbps("8000000"), 8.0)
+        self.assertEqual(presets.bitrate_to_mbps("8"), 8.0)
+        self.assertIsNone(presets.bitrate_to_mbps("Source / CRF"))
+
+    def test_sub_100k_bitrate_formats_without_rounding_to_zero(self):
+        self.assertEqual(presets.format_mbps(0.033), "33k")
+        self.assertEqual(presets.bitrate_to_mbps("33k"), 0.033)
+
+    def test_quick_presets_are_complete_container_settings(self):
+        yt = presets.quick_preset_settings("YouTube 1080p HD")
+        self.assertEqual(yt["container"], "mp4")
+        self.assertEqual(yt["video_codec"], "libx264")
+        self.assertEqual(yt["audio_codec"], "aac")
+        self.assertEqual(yt["encoding_mode"], "vbr")
+
+        efficient = presets.quick_preset_settings("Hocheffizient (CRF 23)")
+        self.assertEqual(efficient["video_codec"], "libx265")
+        self.assertEqual(efficient["encoding_mode"], "crf")
 
 
 if __name__ == "__main__":

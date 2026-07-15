@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QSplitter, QCheckBox, QSlider, QApplication, QFrame, QDialog,
     QStackedWidget, QMenu
 )
-from PyQt6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QFont, QIcon, QPixmap
+from PyQt6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QFont, QIcon, QPixmap, QTransform
 
 import presets
 import styles
@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self.active_worker = None # Aktive FFmpegWorker-Instanz
         self.is_running = False   # Warteschlangen-Status
         self._image_preview_pixmap = QPixmap()
+        self._image_preview_rotation = 0  # Drehwinkel (0/90/180/270) des angezeigten Jobs
         self._single_job_idx = None   # Kontextmenü "nur diesen Job starten"
         self._run_total = 0           # Jobs im aktuellen Lauf (Gesamtfortschritt)
         self._run_done = 0
@@ -671,12 +672,20 @@ class MainWindow(QMainWindow):
         self.image_preview_label.crop_changed.connect(self._on_image_crop_changed)
         image_preview_layout.addWidget(self.image_preview_label, stretch=1)
 
-        # Zuschnitt-Statuszeile + Aufheben-Button unter der Vorschau
+        # Zuschnitt-/Dreh-Statuszeile + Aktions-Buttons unter der Vorschau
         crop_bar = QHBoxLayout()
         crop_bar.setContentsMargins(0, 0, 0, 0)
         crop_bar.setSpacing(6)
         self.image_crop_info_label = QLabel("")
         crop_bar.addWidget(self.image_crop_info_label, stretch=1)
+        self.btn_rotate_left = QPushButton("⟲ 90°")
+        self.btn_rotate_left.setToolTip("Bild um 90° gegen den Uhrzeigersinn drehen")
+        self.btn_rotate_left.clicked.connect(lambda: self._on_rotate_clicked(-90))
+        crop_bar.addWidget(self.btn_rotate_left)
+        self.btn_rotate_right = QPushButton("⟳ 90°")
+        self.btn_rotate_right.setToolTip("Bild um 90° im Uhrzeigersinn drehen")
+        self.btn_rotate_right.clicked.connect(lambda: self._on_rotate_clicked(90))
+        crop_bar.addWidget(self.btn_rotate_right)
         self.btn_reset_crop = QPushButton("Zuschnitt aufheben")
         self.btn_reset_crop.setEnabled(False)
         self.btn_reset_crop.clicked.connect(self._on_reset_crop_clicked)
@@ -736,6 +745,7 @@ class MainWindow(QMainWindow):
         pixmap = QPixmap(image_path)
         if pixmap.isNull():
             self._image_preview_pixmap = QPixmap()
+            self._image_preview_rotation = 0
             self.image_preview_label.clear()
             self.image_preview_label.setText("[ Bildvorschau nicht verfügbar ]")
             self.image_preview_label.set_interactive(False)
@@ -745,25 +755,59 @@ class MainWindow(QMainWindow):
             return
 
         self._image_preview_pixmap = pixmap
-        self.image_preview_label.set_source_size(pixmap.width(), pixmap.height())
+        self._image_preview_rotation = presets.get_rotation(job.get("settings", {}))
+        self.image_preview_label.set_source_size(*self._rotated_source_dims(self._image_preview_rotation))
         crop = presets.get_crop(job.get("settings", {}))
         self.image_preview_label.set_crop(crop)
         self.image_preview_label.set_interactive(not self._job_is_busy(job))
         self._update_crop_ui(crop)
         self._render_image_preview_pixmap()
 
+    def _rotated_source_dims(self, angle):
+        """Quellmaße (Breite, Höhe) unter Berücksichtigung der Drehung — 90°/270°
+        vertauschen die Kantenlängen gegenüber dem unrotierten Quellbild."""
+        w, h = self._image_preview_pixmap.width(), self._image_preview_pixmap.height()
+        return (h, w) if angle in (90, 270) else (w, h)
+
     def _update_crop_ui(self, crop):
-        """Aktualisiert Zuschnitt-Statuszeile und Aufheben-Button."""
+        """Aktualisiert Zuschnitt-/Dreh-Statuszeile und Aufheben-Button."""
         if crop:
-            self.image_crop_info_label.setText(
-                f"Zuschnitt: {crop['w']}×{crop['h']} px ab ({crop['x']}, {crop['y']})"
-            )
+            text = f"Zuschnitt: {crop['w']}×{crop['h']} px ab ({crop['x']}, {crop['y']})"
             self.btn_reset_crop.setEnabled(True)
         else:
-            self.image_crop_info_label.setText(
-                "Kein Zuschnitt — Rechteck mit der Maus über das Bild ziehen."
-            )
+            text = "Kein Zuschnitt — Rechteck mit der Maus über das Bild ziehen."
             self.btn_reset_crop.setEnabled(False)
+        if self._image_preview_rotation:
+            text += f" · Gedreht um {self._image_preview_rotation}°"
+        self.image_crop_info_label.setText(text)
+
+    def _on_rotate_clicked(self, delta):
+        """Dreht das Bild des selektierten Jobs um 90° (delta=+90 im Uhrzeigersinn,
+        -90 gegen den Uhrzeigersinn)."""
+        selected_row = self.queue_table.currentRow()
+        if selected_row < 0 or selected_row >= len(self.jobs):
+            return
+        job = self.jobs[selected_row]
+        if self._job_is_busy(job):
+            return
+
+        current = presets.get_rotation(job.get("settings", {}))
+        new_angle = (current + delta) % 360
+        job["settings"]["rotate"] = new_angle
+
+        # Ein bestehender Zuschnitt bezieht sich auf die alte Bildausrichtung
+        # und würde nach dem Drehen ein falsches Rechteck zeigen — zurücksetzen
+        # statt die Koordinaten fehleranfällig umzurechnen.
+        job["settings"].pop("crop", None)
+        self.image_preview_label.set_crop(None)
+
+        self._image_preview_rotation = new_angle
+        self.image_preview_label.set_source_size(*self._rotated_source_dims(new_angle))
+        self._render_image_preview_pixmap()
+        self._update_crop_ui(None)
+        # Drehung um 90°/270° vertauscht das Seitenverhältnis → Höhe nachziehen
+        self._sync_size_spins_to_aspect("width")
+        self._save_ui_settings_to_job()
 
     def _apply_image_crop_to_job(self, crop):
         """Schreibt den Zuschnitt in den selektierten Job und aktualisiert die Anzeigen."""
@@ -792,7 +836,8 @@ class MainWindow(QMainWindow):
         self._apply_image_crop_to_job(None)
 
     def _render_image_preview_pixmap(self):
-        """Skaliert das geladene Bild auf die aktuell verfügbare Vorschaufläche."""
+        """Skaliert das geladene Bild auf die aktuell verfügbare Vorschaufläche
+        und dreht es gemäß dem eingestellten Drehwinkel."""
         if self._image_preview_pixmap.isNull() or not hasattr(self, "image_preview_label"):
             return
 
@@ -800,11 +845,21 @@ class MainWindow(QMainWindow):
         if target_size.width() < 32 or target_size.height() < 32:
             target_size = QSize(700, 500)
 
+        angle = self._image_preview_rotation
+        # Bei 90°/270° vertauscht die Drehung die Kantenlängen — den Zielrahmen
+        # vorab spiegeln, damit das gedrehte Ergebnis wieder in die Vorschau passt.
+        fit_size = QSize(target_size.height(), target_size.width()) if angle in (90, 270) else target_size
+
+        # Erst das (i. d. R. hochauflösende) Quellbild herunterskalieren, dann
+        # das kleine Ergebnis drehen — spart das Drehen voller Auflösung bei
+        # jedem Resize-Event.
         scaled = self._image_preview_pixmap.scaled(
-            target_size,
+            fit_size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        if angle:
+            scaled = scaled.transformed(QTransform().rotate(angle), Qt.TransformationMode.SmoothTransformation)
         self.image_preview_label.setPixmap(scaled)
 
     def resizeEvent(self, event):
@@ -1267,22 +1322,11 @@ class MainWindow(QMainWindow):
         else:
             self.combo_encoding.setCurrentText("CBR" if mode == "cbr" else "VBR, 1 Durchgang")
             self.lbl_bitrate_val.setText("Zielbitrate (Mbps):")
-            self.spin_bitrate_val.setDecimals(1)
-            self.spin_bitrate_val.setRange(0.1, 200.0)
-            self.spin_bitrate_val.setSingleStep(0.5)
             self.slider_bitrate.setRange(1, 2000)
-            
-            if vbitrate:
-                try:
-                    num_val = float(vbitrate.replace("M", "").replace("k", ""))
-                    self.spin_bitrate_val.setValue(num_val)
-                    self.slider_bitrate.setValue(int(num_val * 10))
-                except ValueError:
-                    self.spin_bitrate_val.setValue(8.0)
-                    self.slider_bitrate.setValue(80)
-            else:
-                self.spin_bitrate_val.setValue(8.0)
-                self.slider_bitrate.setValue(80)
+            num_val = presets.bitrate_to_mbps(vbitrate, 8.0) if vbitrate else 8.0
+            self._configure_bitrate_spin(num_val)
+            self.spin_bitrate_val.setValue(num_val)
+            self.slider_bitrate.setValue(int(num_val * 10))
                 
         # Audio Codec und Bitrate setzen
         self.combo_audiocodec.setCurrentText(presets.audio_codec_to_label(acodec))
@@ -1395,6 +1439,9 @@ class MainWindow(QMainWindow):
             crop = presets.get_crop(settings)
             if crop:
                 size_info = f"Zuschnitt {crop['w']}x{crop['h']}, {size_info}"
+            rotate = presets.get_rotation(settings)
+            if rotate:
+                size_info = f"{size_info}, gedreht {rotate}°"
             quality = settings.get("image_quality", 90)
             quality_info = "verlustfrei" if vcodec == "png" else f"Qualität {quality} %"
             v_sum = f"Bild: {presets.format_label(settings)}, {size_info}, {quality_info}"
@@ -1542,6 +1589,7 @@ class MainWindow(QMainWindow):
             self.settings_widget.setEnabled(False)
             self.edit_cmd_preview.clear()
             self._image_preview_pixmap = QPixmap()
+            self._image_preview_rotation = 0
             self._show_queue_view()
 
     def _on_scale_mode_changed(self, text):
@@ -1609,15 +1657,23 @@ class MainWindow(QMainWindow):
 
     def _effective_aspect_source(self):
         """Maßgebliche Quellmaße für die Seitenverhältnis-Kopplung des selektierten
-        Jobs. Ein gesetzter Zuschnitt bestimmt das Seitenverhältnis, sonst die Quelle."""
+        Jobs. Ein gesetzter Zuschnitt bestimmt das Seitenverhältnis, sonst die
+        (ggf. um 90°/270° gedrehte) Quelle."""
         selected_row = self.queue_table.currentRow()
         if selected_row < 0 or selected_row >= len(self.jobs):
             return None
         job = self.jobs[selected_row]
         crop = presets.get_crop(job.get("settings", {}))
         if crop:
+            # Der Zuschnitt bezieht sich bereits auf das gedrehte Bild, kein
+            # weiteres Vertauschen nötig.
             return crop["w"], crop["h"]
-        return self._get_job_source_size(job)
+        dims = self._get_job_source_size(job)
+        if not dims:
+            return None
+        if presets.get_rotation(job.get("settings", {})) in (90, 270):
+            return dims[1], dims[0]
+        return dims
 
     def _sync_size_spins_to_aspect(self, changed):
         """Hält Breite/Höhe im Modus 'Seitenverhältnis beibehalten' gekoppelt."""
@@ -1664,6 +1720,7 @@ class MainWindow(QMainWindow):
             "scale_mode": prev.get("scale_mode", ""),
         }
         keep_crop = presets.get_crop(prev)
+        keep_rotate = presets.get_rotation(prev)
         # Untertitel-/Schnitt-Konfiguration überlebt den Wechsel — die
         # Format-Zweige unten ersetzen das settings-Dict komplett.
         keep_subs = {k: prev[k] for k in presets.SUBTITLE_SETTING_KEYS if k in prev}
@@ -1711,9 +1768,12 @@ class MainWindow(QMainWindow):
                 job["settings"]["scale_mode"] = keep["scale_mode"]
                 job["settings"]["match_source"] = keep["scale_mode"] == presets.SCALE_MODE_SOURCE
 
-        # Zuschnitt ist quellbezogen und überlebt den Format-Wechsel bei Bild-Jobs
-        if keep_crop and job["settings"].get("container") in presets.IMAGE_CONTAINERS:
-            job["settings"]["crop"] = keep_crop
+        # Zuschnitt/Drehung sind quellbezogen und überleben den Format-Wechsel bei Bild-Jobs
+        if job["settings"].get("container") in presets.IMAGE_CONTAINERS:
+            if keep_crop:
+                job["settings"]["crop"] = keep_crop
+            if keep_rotate:
+                job["settings"]["rotate"] = keep_rotate
 
         # Untertitel-/Schnitt-Einstellungen wiederherstellen (für Bildformate irrelevant)
         if job["settings"].get("container") not in presets.IMAGE_CONTAINERS:
@@ -1761,13 +1821,17 @@ class MainWindow(QMainWindow):
         if text in presets.PRESETS:
             prev = job.get("settings", {}) or {}
             keep_crop = presets.get_crop(prev)
+            keep_rotate = presets.get_rotation(prev)
             keep_subs = {k: prev[k] for k in presets.SUBTITLE_SETTING_KEYS if k in prev}
             keep_trim = {k: prev[k] for k in ("trim_start", "trim_end") if k in prev}
             job["settings"] = dict(presets.PRESETS[text])
             job["settings"]["custom_mode"] = False
             job["settings"]["preset_label"] = text
-            if keep_crop and job["settings"].get("container") in presets.IMAGE_CONTAINERS:
-                job["settings"]["crop"] = keep_crop
+            if job["settings"].get("container") in presets.IMAGE_CONTAINERS:
+                if keep_crop:
+                    job["settings"]["crop"] = keep_crop
+                if keep_rotate:
+                    job["settings"]["rotate"] = keep_rotate
             # Untertitel-/Schnitt-Konfiguration überlebt den Preset-Wechsel
             if job["settings"].get("container") not in presets.IMAGE_CONTAINERS:
                 if keep_subs:
@@ -1778,34 +1842,22 @@ class MainWindow(QMainWindow):
             self._save_ui_settings_to_job()
             return
 
-        job["settings"]["custom_mode"] = False
-        job["settings"]["match_source"] = False
-        if job["settings"].get("scale_mode") == presets.SCALE_MODE_SOURCE:
-            job["settings"]["scale_mode"] = presets.SCALE_MODE_FIT
-            self.combo_scale_mode.blockSignals(True)
-            self.combo_scale_mode.setCurrentText(presets.scale_mode_to_label(presets.SCALE_MODE_FIT))
-            self.combo_scale_mode.blockSignals(False)
-
-        if text == "YouTube 1080p HD":
-            self.spin_width.setValue(1920)
-            self.spin_height.setValue(1080)
-            self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
-            self.spin_bitrate_val.setValue(16.0)
-        elif text == "YouTube 720p HD":
-            self.spin_width.setValue(1280)
-            self.spin_height.setValue(720)
-            self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
-            self.spin_bitrate_val.setValue(8.0)
-        elif text == "Hocheffizient (CRF 23)":
-            self.combo_encoding.setCurrentText("CRF (Qualitätsbasiert)")
-            self.spin_bitrate_val.setValue(23.0)
-        elif text == "Stream-Kopie (Verlustfrei)":
-            # Preset-Parameter direkt in settings schreiben
-            job["settings"]["video_codec"] = "copy"
-            job["settings"]["audio_codec"] = "copy"
+        quick_settings = presets.quick_preset_settings(text)
+        if quick_settings is not None:
+            prev = job.get("settings", {}) or {}
+            keep_subs = {k: prev[k] for k in presets.SUBTITLE_SETTING_KEYS if k in prev}
+            keep_trim = {k: prev[k] for k in ("trim_start", "trim_end") if k in prev}
+            job["settings"] = dict(quick_settings)
+            job["settings"]["custom_mode"] = False
+            job["settings"]["preset_label"] = text
+            if job["settings"].get("container") not in presets.IMAGE_CONTAINERS:
+                if keep_subs:
+                    job["settings"].update(keep_subs)
+                if keep_trim:
+                    job["settings"].update(keep_trim)
             self._load_job_settings_to_ui(job)
-            
-        self._save_ui_settings_to_job()
+            self._save_ui_settings_to_job()
+            return
 
     def _on_encoding_method_changed(self, text):
         """Synchronisiert Codierungs-Methode und regelt Slider-Skalierung."""
@@ -1823,9 +1875,7 @@ class MainWindow(QMainWindow):
             self.slider_bitrate.setValue(23)
         else:
             self.lbl_bitrate_val.setText("Zielbitrate (Mbps):")
-            self.spin_bitrate_val.setDecimals(1)
-            self.spin_bitrate_val.setRange(0.1, 200.0)
-            self.spin_bitrate_val.setSingleStep(0.5)
+            self._configure_bitrate_spin()
             self.spin_bitrate_val.setValue(8.0)
             
             self.slider_bitrate.setRange(1, 2000)
@@ -1906,6 +1956,13 @@ class MainWindow(QMainWindow):
                 self.edit_sub_file_path.setText(saved_path)
                 self.chk_subtitles.setChecked(True)
                 self._save_ui_settings_to_job()
+
+    def _configure_bitrate_spin(self, value=None):
+        """Erlaubt bei Bedarf präzise Bitraten unterhalb von 0,1 Mbps."""
+        low_bitrate = value is not None and 0 < float(value) < 0.1
+        self.spin_bitrate_val.setDecimals(3 if low_bitrate else 1)
+        self.spin_bitrate_val.setRange(0.001 if low_bitrate else 0.1, 200.0)
+        self.spin_bitrate_val.setSingleStep(0.001 if low_bitrate else 0.5)
 
     def _on_slider_bitrate_changed(self, value):
         """Schieberegler synchronisiert das Eingabefeld."""
@@ -2103,9 +2160,12 @@ class MainWindow(QMainWindow):
         for row in sorted(set(rows) - set(busy), reverse=True):
             self.jobs.pop(row)
             self.queue_table.removeRow(row)
+            if self.current_job_idx != -1 and row < self.current_job_idx:
+                self.current_job_idx -= 1
 
         if not self.jobs:
             self._image_preview_pixmap = QPixmap()
+            self._image_preview_rotation = 0
             self._show_queue_view()
         self._update_ui_state()
 
@@ -2132,7 +2192,7 @@ class MainWindow(QMainWindow):
         act_start = menu.addAction("Nur diesen Job starten")
         act_start.setEnabled(not self.is_running and not busy)
         act_duplicate = menu.addAction("Job duplizieren")
-        act_duplicate.setEnabled(not busy)
+        act_duplicate.setEnabled(not self.is_running and not busy)
         act_trim = menu.addAction("Video verkürzen (Schnitt)...")
         act_trim.setEnabled(not busy and not presets.is_image_input(job.get("input_file")))
         menu.addSeparator()
@@ -2147,7 +2207,7 @@ class MainWindow(QMainWindow):
         act_errors.setEnabled(bool(job.get("error_tail")) and job["status"] == "Fehlgeschlagen")
         menu.addSeparator()
         act_remove = menu.addAction("Entfernen")
-        act_remove.setEnabled(not busy)
+        act_remove.setEnabled(not self.is_running and not busy)
 
         chosen = menu.exec(self.queue_table.viewport().mapToGlobal(pos))
         if chosen is None:
@@ -2191,6 +2251,8 @@ class MainWindow(QMainWindow):
         self.jobs.insert(row + 1, new_job)
         self._rebuild_queue_table(select_row=row + 1)
         self._update_ui_state()
+        if self.current_job_idx != -1 and row + 1 <= self.current_job_idx:
+            self.current_job_idx += 1
         self.statusBar().showMessage(
             "Job dupliziert — Hinweis: gleiche Ausgabedatei, ggf. Zielnamen anpassen."
         )
@@ -2233,6 +2295,7 @@ class MainWindow(QMainWindow):
         self.queue_table.setRowCount(0)
         self.edit_cmd_preview.clear()
         self._image_preview_pixmap = QPixmap()
+        self._image_preview_rotation = 0
         self._show_queue_view()
         self._update_ui_state()
 
@@ -2738,7 +2801,11 @@ class MainWindow(QMainWindow):
         self.sub_ai_process = QProcess(self)
         self.sub_ai_process.finished.connect(self._on_subtitle_transcription_finished)
         self.sub_ai_process.errorOccurred.connect(self._on_subtitle_process_failed_to_start)
-        self.sub_ai_process.start(cli_cmd, subtitle_utils.build_ai_args(cli_cmd, prompt))
+        args = subtitle_utils.build_ai_args(cli_cmd, prompt)
+        self.sub_ai_process.start(cli_cmd, args)
+        if cli_cmd in ("agy", "antigravity-cli"):
+            self.sub_ai_process.write(prompt.encode("utf-8"))
+            self.sub_ai_process.closeWriteChannel()
 
     def _on_subtitle_process_failed_to_start(self, error):
         """Fängt FailedToStart ab (ffmpeg/KI-CLI fehlt) — 'finished' feuert dann nie,
@@ -3037,6 +3104,7 @@ class MainWindow(QMainWindow):
             
             # Werte in die GUI eintragen
             self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
+            self._configure_bitrate_spin(v_bitrate_mbps)
             self.spin_bitrate_val.setValue(v_bitrate_mbps)
             self.combo_audiobitrate.setCurrentText(a_bitrate_kbps)
 

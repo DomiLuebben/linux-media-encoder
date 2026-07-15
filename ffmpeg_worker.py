@@ -7,6 +7,7 @@ parst den Fortschritt und leitet Logs an die GUI weiter.
 
 import re
 import os
+import uuid
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal
 
 class FFmpegWorker(QObject):
@@ -26,6 +27,15 @@ class FFmpegWorker(QObject):
         # als die Quelle) — sonst wird sie aus dem FFmpeg-Header geparst.
         self.total_duration_sec = float(total_duration) if total_duration else 0.0
         self._duration_fixed = bool(total_duration)
+
+        # Eindeutige Temp-Ausgabedatei im selben Verzeichnis: So bleibt
+        # os.replace() atomar, ohne dass parallele/abgestürzte Worker denselben
+        # vorhersehbaren Staging-Pfad verwenden. Die echte Dateiendung bleibt
+        # erhalten, damit FFmpeg das Ausgabeformat weiterhin erkennen kann.
+        output_dir = os.path.dirname(self.output_file)
+        output_ext = os.path.splitext(os.path.basename(self.output_file))[1]
+        temp_name = f".lme_tmp_{uuid.uuid4().hex}{output_ext}"
+        self.temp_output_file = os.path.join(output_dir, temp_name)
 
         # Regex für Metadaten-Dauer (aus Stderr): "Duration: 00:02:15.33,"
         self.duration_regex = re.compile(r"Duration:\s*(\d{2}):(\d{2}):(\d{2})\.(\d{2})")
@@ -48,6 +58,13 @@ class FFmpegWorker(QObject):
         if self._finished_emitted:
             return
         self._finished_emitted = True
+        if not success:
+            # Clean up temp file on failure/cancellation
+            if hasattr(self, "temp_output_file") and os.path.exists(self.temp_output_file):
+                try:
+                    os.remove(self.temp_output_file)
+                except OSError:
+                    pass
         self.finished.emit(success, message)
 
     def start(self):
@@ -58,6 +75,13 @@ class FFmpegWorker(QObject):
 
         self.process = QProcess(self)
         
+        # Replace output_file (usually the last argument) with temp_output_file
+        modified_args = list(self.ffmpeg_args)
+        if modified_args and modified_args[-1] == self.output_file:
+            modified_args[-1] = self.temp_output_file
+        else:
+            modified_args = [self.temp_output_file if arg == self.output_file else arg for arg in modified_args]
+
         # Wir fügen '-progress -' an den Anfang der FFmpeg-Argumente ein, 
         # damit FFmpeg Fortschrittsinformationen im Schlüssel-Wert-Format an stdout sendet.
         # So trennen wir Logs (stderr) von strukturierten Fortschritten (stdout).
@@ -65,16 +89,16 @@ class FFmpegWorker(QObject):
         # Argumente durchsuchen und '-progress -' nach dem Input, aber vor dem Output einfügen
         # Einfacher ist es, es direkt nach '-i <input>' einzufügen
         input_idx = -1
-        for i, arg in enumerate(self.ffmpeg_args):
+        for i, arg in enumerate(modified_args):
             if arg == "-i":
                 input_idx = i + 2
                 break
         
-        if input_idx != -1 and input_idx < len(self.ffmpeg_args):
-            full_args = self.ffmpeg_args[:input_idx] + ["-progress", "-"] + self.ffmpeg_args[input_idx:]
+        if input_idx != -1 and input_idx < len(modified_args):
+            full_args = modified_args[:input_idx] + ["-progress", "-"] + modified_args[input_idx:]
         else:
             # Fallback
-            full_args = ["-progress", "-"] + self.ffmpeg_args
+            full_args = ["-progress", "-"] + modified_args
 
         self.status_changed.emit("Initialisiere FFmpeg...")
         
@@ -219,8 +243,12 @@ class FFmpegWorker(QObject):
         if exit_status != QProcess.ExitStatus.NormalExit:
             self._emit_finished(False, "Konvertierung fehlgeschlagen (FFmpeg-Prozess abgestürzt).")
         elif exit_code == 0:
-            self.progress_updated.emit(100.0, "0.0x", "Fertig")
-            self._emit_finished(True, "Erfolgreich konvertiert.")
+            try:
+                os.replace(self.temp_output_file, self.output_file)
+                self.progress_updated.emit(100.0, "0.0x", "Fertig")
+                self._emit_finished(True, "Erfolgreich konvertiert.")
+            except Exception as e:
+                self._emit_finished(False, f"Fehler beim Speichern der Zieldatei: {e}")
         else:
             # Fehlercode oder Abbruch
             self._emit_finished(False, f"Konvertierung fehlgeschlagen (Exit-Code: {exit_code}).")

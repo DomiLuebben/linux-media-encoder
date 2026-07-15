@@ -127,6 +127,9 @@ class SubtitleEditorDialog(QDialog):
         self.sub_ai_process.finished.connect(self._on_ai_finished)
         self.sub_ai_process.errorOccurred.connect(self._on_process_failed_to_start)
         self.sub_ai_process.start(cli_cmd, subtitle_utils.build_ai_args(cli_cmd, prompt))
+        if cli_cmd in ("agy", "antigravity-cli"):
+            self.sub_ai_process.write(prompt.encode('utf-8'))
+            self.sub_ai_process.closeWriteChannel()
 
     def _on_process_failed_to_start(self, error):
         """ffmpeg/KI-CLI fehlt: 'finished' feuert nie — Dialog nicht hängen lassen."""
@@ -226,8 +229,9 @@ class SubtitleEditorDialog(QDialog):
                 if not file_path:
                     return
         try:
+            normalized = subtitle_utils.normalize_srt(edited_content)
             with open(file_path, "w", encoding="utf-8") as f:
-                f.write(subtitle_utils.normalize_srt(edited_content))
+                f.write(normalized)
             self.saved_srt_path = file_path
             self.accept()
         except Exception as e:
@@ -245,11 +249,23 @@ class SubtitleEditorDialog(QDialog):
             self.temp_audio_path = None
             
     def reject(self):
-        if self.sub_process and self.sub_process.state() != QProcess.ProcessState.NotRunning:
-            self.sub_process.kill()
-            self.sub_process.waitForFinished(1000)
-        if self.sub_ai_process and self.sub_ai_process.state() != QProcess.ProcessState.NotRunning:
-            self.sub_ai_process.kill()
-            self.sub_ai_process.waitForFinished(1000)
+        if self.sub_process:
+            try:
+                self.sub_process.finished.disconnect()
+                self.sub_process.errorOccurred.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if self.sub_process.state() != QProcess.ProcessState.NotRunning:
+                self.sub_process.kill()
+                self.sub_process.waitForFinished(1000)
+        if self.sub_ai_process:
+            try:
+                self.sub_ai_process.finished.disconnect()
+                self.sub_ai_process.errorOccurred.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if self.sub_ai_process.state() != QProcess.ProcessState.NotRunning:
+                self.sub_ai_process.kill()
+                self.sub_ai_process.waitForFinished(1000)
         self._cleanup_temp_files()
         super().reject()

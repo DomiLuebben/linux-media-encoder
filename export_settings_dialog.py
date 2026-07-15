@@ -90,6 +90,8 @@ class ExportSettingsDialog(QDialog):
         self.preview_frame_path = None
         self._preview_proc = None
         self._probe_proc = None
+        self._probe_done = False
+        self._retained_procs = set()
 
         # UI initialisieren
         self._init_layout()
@@ -599,6 +601,9 @@ class ExportSettingsDialog(QDialog):
             src = self.source_info or {}
             default_w = int(src["width"]) if src.get("width") else 1920
             default_h = int(src["height"]) if src.get("height") else 1080
+            rotation = presets.get_rotation(self.settings)
+            if rotation in (90, 270):
+                default_w, default_h = default_h, default_w
             self.spin_width.setValue(int(self.settings.get("width") or default_w))
             self.spin_height.setValue(int(self.settings.get("height") or default_h))
             fps_setting = str(self.settings.get("fps", "") or "").strip()
@@ -657,22 +662,11 @@ class ExportSettingsDialog(QDialog):
             else:
                 self.combo_encoding.setCurrentText("CBR" if mode == "cbr" else "VBR, 1 Durchgang")
                 self.lbl_bitrate_val.setText("Zielbitrate (Mbps):")
-                self.spin_bitrate_val.setDecimals(1)
-                self.spin_bitrate_val.setRange(0.1, 200.0)
-                self.spin_bitrate_val.setSingleStep(0.5)
                 self.slider_bitrate.setRange(1, 2000)
-
-                if vbitrate:
-                    try:
-                        num_val = float(vbitrate.replace("M", "").replace("k", ""))
-                        self.spin_bitrate_val.setValue(num_val)
-                        self.slider_bitrate.setValue(int(num_val * 10))
-                    except ValueError:
-                        self.spin_bitrate_val.setValue(8.0)
-                        self.slider_bitrate.setValue(80)
-                else:
-                    self.spin_bitrate_val.setValue(8.0)
-                    self.slider_bitrate.setValue(80)
+                num_val = presets.bitrate_to_mbps(vbitrate, 8.0) if vbitrate else 8.0
+                self._configure_bitrate_spin(num_val)
+                self.spin_bitrate_val.setValue(num_val)
+                self.slider_bitrate.setValue(int(num_val * 10))
 
             self.combo_encoding.blockSignals(False)
             self.slider_bitrate.blockSignals(False)
@@ -966,9 +960,12 @@ class ExportSettingsDialog(QDialog):
             self.settings.setdefault("audio_codec", "aac")
         elif text in ("JPEG (Bild)", "PNG (Bild)", "WebP (Bild)", "AVIF (Bild)"):
             keep_crop = presets.get_crop(self.settings)
+            keep_rotate = self.settings.get("rotate")
             self.settings = defaults
             if keep_crop:
                 self.settings["crop"] = keep_crop
+            if keep_rotate is not None:
+                self.settings["rotate"] = keep_rotate
             self.chk_export_video.setChecked(True)
             self.chk_export_video.setEnabled(False)
             self.chk_export_audio.setChecked(False)
@@ -1087,9 +1084,12 @@ class ExportSettingsDialog(QDialog):
             # das Dict wird gleich komplett ersetzt und die UI daraus neu geladen.
             keep_subs = {k: self.settings[k] for k in presets.SUBTITLE_SETTING_KEYS if k in self.settings}
             keep_trim = {k: self.settings[k] for k in ("trim_start", "trim_end") if k in self.settings}
+            keep_rotate = self.settings.get("rotate")
             self.settings = dict(presets.PRESETS[text])
             self.settings["custom_mode"] = False
             self.settings["preset_label"] = text
+            if keep_rotate is not None:
+                self.settings["rotate"] = keep_rotate
             if keep_crop and self.settings.get("container") in presets.IMAGE_CONTAINERS:
                 self.settings["crop"] = keep_crop
             if self.settings.get("container") not in presets.IMAGE_CONTAINERS:
@@ -1102,44 +1102,22 @@ class ExportSettingsDialog(QDialog):
             self._update_summary()
             return
 
-        self.settings["custom_mode"] = False
-        self.settings["match_source"] = False
-        if self.settings.get("scale_mode") == presets.SCALE_MODE_SOURCE:
-            self.settings["scale_mode"] = presets.SCALE_MODE_FIT
-            self.combo_scale_mode.blockSignals(True)
-            self.combo_scale_mode.setCurrentText(presets.scale_mode_to_label(presets.SCALE_MODE_FIT))
-            self.combo_scale_mode.blockSignals(False)
-
-        if text == "YouTube 1080p HD":
-            self.spin_width.setValue(1920)
-            self.spin_height.setValue(1080)
-            self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
-            self.spin_bitrate_val.setValue(16.0)
-            self.settings["encoding_mode"] = "vbr"
-            self.settings["video_bitrate"] = "16M"
-            self.settings["crf"] = ""
-        elif text == "YouTube 720p HD":
-            self.spin_width.setValue(1280)
-            self.spin_height.setValue(720)
-            self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
-            self.spin_bitrate_val.setValue(8.0)
-            self.settings["encoding_mode"] = "vbr"
-            self.settings["video_bitrate"] = "8M"
-            self.settings["crf"] = ""
-        elif text == "Hocheffizient (CRF 23)":
-            self.combo_encoding.setCurrentText("CRF (Qualitätsbasiert)")
-            self.spin_bitrate_val.setValue(23.0)
-            self.settings["encoding_mode"] = "crf"
-            self.settings["video_bitrate"] = ""
-            self.settings["crf"] = "23"
-        elif text == "Stream-Kopie (Verlustfrei)":
-            self.settings["video_codec"] = "copy"
-            self.settings["audio_codec"] = "copy"
-            self.combo_vcodec.setCurrentText("copy")
-            self.combo_audiocodec.setCurrentText("Kopieren (Copy)")
-
-        self._update_widget_visibilities()
-        self._update_summary()
+        quick_settings = presets.quick_preset_settings(text)
+        if quick_settings is not None:
+            keep_subs = {k: self.settings[k] for k in presets.SUBTITLE_SETTING_KEYS if k in self.settings}
+            keep_trim = {k: self.settings[k] for k in ("trim_start", "trim_end") if k in self.settings}
+            self.settings = dict(quick_settings)
+            self.settings["custom_mode"] = False
+            self.settings["preset_label"] = text
+            if self.settings.get("container") not in presets.IMAGE_CONTAINERS:
+                if keep_subs:
+                    self.settings.update(keep_subs)
+                if keep_trim:
+                    self.settings.update(keep_trim)
+            self._set_output_extension(self.settings["container"])
+            self._load_settings_to_ui()
+            self._update_summary()
+            return
 
     def _on_encoding_method_changed(self, text):
         """Schaltet zwischen Bitrate (Mbps) und CRF (Qualität) um und passt den Slider an."""
@@ -1164,9 +1142,7 @@ class ExportSettingsDialog(QDialog):
             self.settings["crf"] = "23"
         else:
             self.lbl_bitrate_val.setText("Zielbitrate (Mbps):")
-            self.spin_bitrate_val.setDecimals(1)
-            self.spin_bitrate_val.setRange(0.1, 200.0)
-            self.spin_bitrate_val.setSingleStep(0.5)
+            self._configure_bitrate_spin()
             self.spin_bitrate_val.setValue(8.0)
 
             self.slider_bitrate.setRange(1, 2000)
@@ -1287,6 +1263,17 @@ class ExportSettingsDialog(QDialog):
 
     def _set_preview_image(self, image_path):
         """Zeigt das übergebene Vorschaubild oder den passenden Fallback an."""
+        is_audio = (
+            getattr(self, "_probe_done", False)
+            and bool(self.source_info)
+            and self.source_info.get("width") is None
+            and self.source_info.get("a_codec") is not None
+        )
+
+        if is_audio:
+            self.preview_label.setText("[ Nur Audio – keine Bildvorschau ]")
+            return
+
         if not image_path or not os.path.exists(image_path):
             fallback = os.path.join(os.path.dirname(__file__), "sample_video_frame.png")
             image_path = fallback if os.path.exists(fallback) else None
@@ -1295,9 +1282,28 @@ class ExportSettingsDialog(QDialog):
             pixmap = QPixmap(image_path).scaled(600, 340, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             self.preview_label.setPixmap(pixmap)
         else:
-            # Reine Audio-Quelle o. Ä. -> kein Bild verfügbar
-            is_audio = bool(self.source_info) and self.source_info.get("width") is None
-            self.preview_label.setText("[ Nur Audio – keine Bildvorschau ]" if is_audio else "[ Video-Vorschau ]")
+            self.preview_label.setText("[ Video-Vorschau ]")
+
+    def _retain_preview_process(self, proc):
+        """Hält einen verworfenen QProcess bis zu dessen echtem Ende am Leben."""
+        self._retained_procs.add(proc)
+
+        def release(*_args):
+            if proc.state() != QProcess.ProcessState.NotRunning:
+                return
+            try:
+                proc.finished.disconnect(release)
+                proc.errorOccurred.disconnect(release)
+            except (TypeError, RuntimeError):
+                pass
+            self._retained_procs.discard(proc)
+            proc.deleteLater()
+
+        # finished liefert (exit_code, exit_status), errorOccurred nur einen
+        # Wert. *args verhindert, dass exit_status versehentlich die gebundene
+        # Prozessreferenz überschreibt.
+        proc.finished.connect(release)
+        proc.errorOccurred.connect(release)
 
     def _trigger_preview_update(self, seek_seconds=None):
         """Extrahiert das Vorschaubild asynchron via QProcess.
@@ -1307,13 +1313,20 @@ class ExportSettingsDialog(QDialog):
             self._set_preview_image(None)
             return
         # Reine Audio-Datei -> kein Frame
-        if self.source_info and self.source_info.get("width") is None:
+        if getattr(self, "_probe_done", False) and self.source_info and self.source_info.get("width") is None and self.source_info.get("a_codec") is not None:
             self._set_preview_image(None)
             return
 
         # Nur die aktuellste Anforderung zählt: laufende Extraktion verwerfen
         if self._preview_proc and self._preview_proc.state() != QProcess.ProcessState.NotRunning:
-            self._preview_proc.kill()
+            old_proc = self._preview_proc
+            try:
+                old_proc.finished.disconnect()
+                old_proc.errorOccurred.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self._retain_preview_process(old_proc)
+            old_proc.kill()
 
         import tempfile
         try:
@@ -1362,6 +1375,8 @@ class ExportSettingsDialog(QDialog):
         if exit_code == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             self.preview_frame_path = out_path
             self._set_preview_image(out_path)
+        else:
+            self._set_preview_image(None)
 
     def _on_preview_failed_to_start(self, proc, error):
         """ffmpeg fehlt: 'finished' feuert nie — Fallback-Bild anzeigen."""
@@ -1529,8 +1544,13 @@ class ExportSettingsDialog(QDialog):
         if mode != presets.SCALE_MODE_SOURCE and not self.settings.get("width"):
             info = self.source_info or {}
             if info.get("width") and info.get("height"):
-                self.spin_width.setValue(int(info["width"]))
-                self.spin_height.setValue(int(info["height"]))
+                w = int(info["width"])
+                h = int(info["height"])
+                rotation = presets.get_rotation(self.settings)
+                if rotation in (90, 270):
+                    w, h = h, w
+                self.spin_width.setValue(w)
+                self.spin_height.setValue(h)
         # Bei AR-Erhalt die Höhe passend zur Breite ausrechnen
         self._sync_size_spins_to_aspect("width")
         self._update_widget_visibilities()
@@ -1544,7 +1564,12 @@ class ExportSettingsDialog(QDialog):
             return crop["w"], crop["h"]
         info = self.source_info or {}
         if info.get("width") and info.get("height"):
-            return int(info["width"]), int(info["height"])
+            w = int(info["width"])
+            h = int(info["height"])
+            rotation = presets.get_rotation(self.settings)
+            if rotation in (90, 270):
+                w, h = h, w
+            return w, h
         return None
 
     def _sync_size_spins_to_aspect(self, changed):
@@ -1571,6 +1596,13 @@ class ExportSettingsDialog(QDialog):
             return
         self._sync_size_spins_to_aspect(changed)
         self._update_summary()
+
+    def _configure_bitrate_spin(self, value=None):
+        """Erlaubt bei Bedarf präzise Bitraten unterhalb von 0,1 Mbps."""
+        low_bitrate = value is not None and 0 < float(value) < 0.1
+        self.spin_bitrate_val.setDecimals(3 if low_bitrate else 1)
+        self.spin_bitrate_val.setRange(0.001 if low_bitrate else 0.1, 200.0)
+        self.spin_bitrate_val.setSingleStep(0.001 if low_bitrate else 0.5)
 
     def _on_slider_bitrate_changed(self, value):
         """Vom Slider zur Spinbox synchronisieren."""
@@ -1636,6 +1668,7 @@ class ExportSettingsDialog(QDialog):
         Ergebnis ab — der Timer stirbt mit dem Dialog, es gibt also keine
         Qt-Aufrufe auf einem zerstörten Objekt."""
         if not self.input_file or not os.path.exists(self.input_file):
+            self._probe_done = True
             return
         self._probe_result = None
         input_file = self.input_file
@@ -1668,7 +1701,9 @@ class ExportSettingsDialog(QDialog):
         self._probe_timer.stop()
         stdout = self._probe_result
         self._probe_result = None
+        self._probe_done = True
         if not stdout:
+            self._trigger_preview_update()
             return
         self.source_info = self._parse_probe_json(stdout)
         self._apply_probe_result()
@@ -1723,8 +1758,13 @@ class ExportSettingsDialog(QDialog):
         if not self.settings.get("width") and info.get("width") and info.get("height"):
             self.spin_width.blockSignals(True)
             self.spin_height.blockSignals(True)
-            self.spin_width.setValue(int(info["width"]))
-            self.spin_height.setValue(int(info["height"]))
+            w = int(info["width"])
+            h = int(info["height"])
+            rotation = presets.get_rotation(self.settings)
+            if rotation in (90, 270):
+                w, h = h, w
+            self.spin_width.setValue(w)
+            self.spin_height.setValue(h)
             self.spin_width.blockSignals(False)
             self.spin_height.blockSignals(False)
         self._update_trim_ui()
@@ -1905,14 +1945,39 @@ class ExportSettingsDialog(QDialog):
 
     def done(self, result):
         """Räumt Vorschau-/Probe-Prozesse und Temp-Dateien beim Schließen auf."""
-        if self._probe_proc and self._probe_proc.state() != QProcess.ProcessState.NotRunning:
-            self._probe_proc.kill()
-            self._probe_proc.waitForFinished(500)
+        if self._probe_proc:
+            try:
+                self._probe_proc.finished.disconnect()
+                self._probe_proc.errorOccurred.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if self._probe_proc.state() != QProcess.ProcessState.NotRunning:
+                self._probe_proc.kill()
+                self._probe_proc.waitForFinished(500)
         self._probe_proc = None
-        if self._preview_proc and self._preview_proc.state() != QProcess.ProcessState.NotRunning:
-            self._preview_proc.kill()
-            self._preview_proc.waitForFinished(500)
+
+        if self._preview_proc:
+            try:
+                self._preview_proc.finished.disconnect()
+                self._preview_proc.errorOccurred.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if self._preview_proc.state() != QProcess.ProcessState.NotRunning:
+                self._preview_proc.kill()
+                self._preview_proc.waitForFinished(500)
         self._preview_proc = None
+
+        for proc in list(self._retained_procs):
+            try:
+                proc.finished.disconnect()
+                proc.errorOccurred.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if proc.state() != QProcess.ProcessState.NotRunning:
+                proc.kill()
+                proc.waitForFinished(500)
+        self._retained_procs.clear()
+
         for path in self._preview_temp_files:
             try:
                 os.remove(path)
@@ -1977,6 +2042,7 @@ class ExportSettingsDialog(QDialog):
             
             # Werte in die GUI eintragen
             self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
+            self._configure_bitrate_spin(v_bitrate_mbps)
             self.spin_bitrate_val.setValue(v_bitrate_mbps)
             self.combo_audiobitrate.setCurrentText(a_bitrate_kbps)
 

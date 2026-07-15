@@ -39,6 +39,8 @@ def choose_ai_cli():
 
 
 def build_ai_args(cli_cmd, prompt):
+    if cli_cmd in ("agy", "antigravity-cli"):
+        return ["--sandbox", "-p", "-"]
     return ["-p", prompt]
 
 
@@ -159,6 +161,13 @@ def merge_translated_text_with_source_timecodes(source_srt, translated_srt):
         raise ValueError(
             f"Uebersetzung hat {len(translated_blocks)} SRT-Bloecke, erwartet waren {len(source_blocks)}."
         )
+
+    for i, (src, trans) in enumerate(zip(source_blocks, translated_blocks)):
+        if src.index != trans.index:
+            raise ValueError(
+                f"SRT-Block-Indizes stimmen an Position {i+1} nicht ueberein: "
+                f"Quelle hat {src.index}, Uebersetzung hat {trans.index}."
+            )
 
     merged = []
     for source, translated in zip(source_blocks, translated_blocks):

@@ -134,21 +134,47 @@ class IntelligentBitrateDialog(QDialog):
         # 5% Puffer für Container-Overhead reservieren
         available_bitrate_bps = total_bitrate_bps * 0.95
         
-        # Audio-Bitrate zuteilen
-        if available_bitrate_bps > 500000:
-            audio_bitrate_kbps = 160
-        elif available_bitrate_bps > 200000:
-            audio_bitrate_kbps = 128
-        elif available_bitrate_bps > 100000:
-            audio_bitrate_kbps = 96
+        # Auf volle kbit/s abrunden. Damit können Rundung und die spätere UI-
+        # Übernahme das verfügbare Gesamtbudget nicht wieder überschreiten.
+        available_bitrate_kbps = int(available_bitrate_bps / 1000)
+        min_audio_kbps = 16
+        min_video_kbps = 10
+        if available_bitrate_kbps < min_audio_kbps + min_video_kbps:
+            minimum_size_mb = (
+                (min_audio_kbps + min_video_kbps) * 1000 * duration
+                / (0.95 * 8 * 1024 * 1024)
+            )
+            self.result_video_bitrate_mbps = 0.0
+            self.result_audio_bitrate_kbps = "0k"
+            self.lbl_res_vbitrate.setText("Nicht erreichbar")
+            self.lbl_res_abitrate.setText("Nicht erreichbar")
+            self.result_group.setVisible(True)
+            self.lbl_status.setText(
+                "Zielgröße zu klein für die minimalen Audio-/Video-Bitraten "
+                f"(mindestens {minimum_size_mb:.1f} MB bei dieser Dauer)."
+            )
+            self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+            return
+
+        # Bevorzugte Audioqualität nach Gesamtbudget, bei knappen Budgets aber
+        # höchstens 40 %. So bleiben mindestens 60 % fürs Bild und die Summe
+        # liegt in jedem Schwellenbereich sicher innerhalb des Zielbudgets.
+        if available_bitrate_kbps > 500:
+            preferred_audio_kbps = 160
+        elif available_bitrate_kbps > 200:
+            preferred_audio_kbps = 128
+        elif available_bitrate_kbps > 100:
+            preferred_audio_kbps = 96
         else:
-            audio_bitrate_kbps = 64
-            
-        video_bitrate_bps = available_bitrate_bps - (audio_bitrate_kbps * 1000)
-        if video_bitrate_bps < 50000:
-            video_bitrate_bps = 50000 # Unteres Limit
-            
-        self.result_video_bitrate_mbps = video_bitrate_bps / 1000000.0
+            preferred_audio_kbps = int(available_bitrate_kbps * 0.40)
+
+        audio_bitrate_kbps = max(
+            min_audio_kbps,
+            min(preferred_audio_kbps, int(available_bitrate_kbps * 0.40)),
+        )
+        video_bitrate_kbps = available_bitrate_kbps - audio_bitrate_kbps
+
+        self.result_video_bitrate_mbps = video_bitrate_kbps / 1000.0
         self.result_audio_bitrate_kbps = f"{audio_bitrate_kbps}k"
         
         # Anzeige aktualisieren
@@ -197,6 +223,9 @@ class IntelligentBitrateDialog(QDialog):
             cmd = subtitle_utils.choose_ai_cli()
             args = subtitle_utils.build_ai_args(cmd, prompt)
         self.ai_process.start(cmd, args)
+        if cmd in ("agy", "antigravity-cli"):
+            self.ai_process.write(prompt.encode("utf-8"))
+            self.ai_process.closeWriteChannel()
 
     def _on_ai_failed_to_start(self, error):
         """KI-CLI fehlt: 'finished' feuert nie — direkt auf die Formel ausweichen."""
@@ -275,3 +304,17 @@ class IntelligentBitrateDialog(QDialog):
     def get_calculated_bitrates(self):
         """Gibt die ermittelten Bitraten zurück."""
         return self.result_video_bitrate_mbps, self.result_audio_bitrate_kbps
+
+    def done(self, result):
+        """Räumt laufende AI-Prozesse beim Schließen auf."""
+        if hasattr(self, "ai_process") and self.ai_process:
+            try:
+                self.ai_process.finished.disconnect()
+                self.ai_process.errorOccurred.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if self.ai_process.state() != QProcess.ProcessState.NotRunning:
+                self.ai_process.kill()
+                self.ai_process.waitForFinished(500)
+        self.ai_process = None
+        super().done(result)

@@ -56,6 +56,48 @@ class MainWindowPresetSyncTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_quick_video_preset_from_audio_only_restores_video_settings(self):
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.mp4"))
+            self.app.processEvents()
+
+            window.combo_format.setCurrentText("MP3 (Nur Audio)")
+            self.app.processEvents()
+            self.assertEqual(window.jobs[0]["settings"]["container"], "mp3")
+            self.assertEqual(window.jobs[0]["settings"]["video_codec"], "none")
+
+            window.combo_preset.setCurrentText("YouTube 1080p HD")
+            self.app.processEvents()
+
+            settings = window.jobs[0]["settings"]
+            self.assertEqual(settings["container"], "mp4")
+            self.assertEqual(settings["video_codec"], "libx264")
+            self.assertEqual(settings["audio_codec"], "aac")
+            self.assertEqual(settings["video_bitrate"], "16M")
+            self.assertEqual(settings["fps"], "30")
+            self.assertTrue(window.chk_export_video.isChecked())
+            self.assertTrue(window.jobs[0]["output_file"].endswith(".mp4"))
+        finally:
+            window.close()
+
+    def test_quick_hocheffizient_selects_h265_crf(self):
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.mp4"))
+            self.app.processEvents()
+
+            window.combo_preset.setCurrentText("Hocheffizient (CRF 23)")
+            self.app.processEvents()
+
+            settings = window.jobs[0]["settings"]
+            self.assertEqual(settings["video_codec"], "libx265")
+            self.assertEqual(settings["encoding_mode"], "crf")
+            self.assertEqual(settings["crf"], "23")
+            self.assertEqual(window.combo_vcodec.currentText(), "libx265")
+        finally:
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

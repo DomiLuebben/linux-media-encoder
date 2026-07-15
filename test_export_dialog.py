@@ -3,6 +3,7 @@ import sys
 import time
 import unittest
 
+from PyQt6.QtCore import QProcess
 from PyQt6.QtWidgets import QApplication
 
 import presets
@@ -91,6 +92,27 @@ class ExportDialogTest(unittest.TestCase):
         finally:
             dialog.reject()
 
+    def test_quick_video_preset_from_audio_only_restores_video_settings(self):
+        dialog = self._make_dialog()
+        try:
+            dialog.combo_format.setCurrentText("MP3 (Nur Audio)")
+            self.app.processEvents()
+            self.assertFalse(dialog.chk_export_video.isChecked())
+
+            dialog.combo_preset.setCurrentText("YouTube 1080p HD")
+            self.app.processEvents()
+
+            output_file, settings = dialog.get_results()
+            self.assertEqual(settings["container"], "mp4")
+            self.assertEqual(settings["video_codec"], "libx264")
+            self.assertEqual(settings["audio_codec"], "aac")
+            self.assertEqual(settings["video_bitrate"], "16M")
+            self.assertEqual(settings["fps"], "30")
+            self.assertTrue(dialog.chk_export_video.isChecked())
+            self.assertTrue(output_file.endswith(".mp4"))
+        finally:
+            dialog.reject()
+
     def test_webm_audio_toggle_restores_container_compatible_codec(self):
         settings = dict(presets.PRESETS["WebM (VP9 / Opus) - Web-optimiert"])
         dialog = ExportSettingsDialog(
@@ -109,6 +131,47 @@ class ExportDialogTest(unittest.TestCase):
             self.assertEqual(settings["container"], "webm")
             self.assertEqual(settings["audio_codec"], "libopus")
             self.assertEqual(dialog.combo_audiocodec.currentText(), "Opus")
+        finally:
+            dialog.reject()
+
+    def test_low_bitrate_roundtrips_without_ui_clamping(self):
+        settings = dict(presets.PRESETS["MP4 (H.264 / AAC) - Standard 1080p"])
+        settings.update({
+            "encoding_mode": "vbr",
+            "crf": "",
+            "video_bitrate": "33k",
+            "audio_bitrate": "22k",
+        })
+        dialog = ExportSettingsDialog(
+            os.path.abspath("test_input.mp4"),
+            os.path.abspath("test_output.mp4"),
+            settings,
+        )
+        try:
+            self.assertAlmostEqual(dialog.spin_bitrate_val.value(), 0.033, places=3)
+            self.assertEqual(dialog.spin_bitrate_val.decimals(), 3)
+
+            _, result = dialog.get_results()
+            self.assertEqual(result["video_bitrate"], "33k")
+            self.assertEqual(result["audio_bitrate"], "22k")
+            args = presets.get_ffmpeg_args(dialog.input_file, dialog.output_file, result)
+            self.assertEqual(args[args.index("-b:v") + 1], "33k")
+            self.assertEqual(args[args.index("-b:a") + 1], "22k")
+        finally:
+            dialog.reject()
+
+    def test_retained_preview_process_is_released_after_finished_signal(self):
+        dialog = self._make_dialog()
+        proc = QProcess(dialog)
+        try:
+            dialog._retain_preview_process(proc)
+            self.assertIn(proc, dialog._retained_procs)
+
+            proc.start(sys.executable, ["-c", "pass"])
+            self.assertTrue(proc.waitForFinished(2000))
+            self.app.processEvents()
+
+            self.assertNotIn(proc, dialog._retained_procs)
         finally:
             dialog.reject()
 

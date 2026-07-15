@@ -100,6 +100,35 @@ class ImageArgsTest(unittest.TestCase):
         self.assertEqual(presets.get_crop({"crop": {"x": -5, "y": 3, "w": 10, "h": 10}}),
                          {"x": 0, "y": 3, "w": 10, "h": 10})
 
+    def test_rotate_filter_mapping(self):
+        self.assertIsNone(presets.rotate_filter(0))
+        self.assertEqual(presets.rotate_filter(90), "transpose=1")
+        self.assertEqual(presets.rotate_filter(180), "hflip,vflip")
+        self.assertEqual(presets.rotate_filter(270), "transpose=2")
+
+    def test_rotate_without_crop(self):
+        args = self._args("png", video_codec="png", rotate=90)
+        self.assertEqual(args[args.index("-vf") + 1], "transpose=1")
+
+    def test_rotate_filter_is_applied_before_crop(self):
+        args = self._args("jpg", video_codec="mjpeg", image_quality=90,
+                          rotate=90, crop={"x": 10, "y": 20, "w": 300, "h": 200})
+        self.assertEqual(args[args.index("-vf") + 1], "transpose=1,crop=300:200:10:20")
+
+    def test_rotate_180_uses_flip_pair(self):
+        args = self._args("png", video_codec="png", rotate=180)
+        self.assertEqual(args[args.index("-vf") + 1], "hflip,vflip")
+
+    def test_invalid_rotate_is_ignored(self):
+        args = self._args("png", video_codec="png", rotate=0)
+        self.assertNotIn("-vf", args)
+        self.assertEqual(presets.get_rotation({}), 0)
+        self.assertEqual(presets.get_rotation({"rotate": "kaputt"}), 0)
+        self.assertEqual(presets.get_rotation({"rotate": 45}), 0)
+        # Normalisiert auf 0-359 vor dem Whitelist-Check
+        self.assertEqual(presets.get_rotation({"rotate": 450}), 90)
+        self.assertEqual(presets.get_rotation({"rotate": -90}), 270)
+
     def test_is_image_input(self):
         self.assertTrue(presets.is_image_input("/tmp/foo.PNG"))
         self.assertTrue(presets.is_image_input("bild.heic"))
@@ -488,6 +517,111 @@ class CropQueueTest(unittest.TestCase):
 
             self.assertIn("crop", window.jobs[0]["settings"])
             self.assertNotIn("crop", window.jobs[1]["settings"])
+        finally:
+            window.close()
+
+
+class RotateQueueTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from PyQt6.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def test_rotate_lands_in_job_settings_and_command(self):
+        from mainwindow import MainWindow
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.png"))
+            self.app.processEvents()
+
+            window.btn_rotate_right.click()
+            job = window.jobs[0]
+            self.assertEqual(job["settings"]["rotate"], 90)
+            self.assertIn("transpose=1", window.edit_cmd_preview.toPlainText())
+
+            # Format-Wechsel behält die Drehung (wie den Zuschnitt)
+            window.combo_format.setCurrentText("WebP (Bild)")
+            self.app.processEvents()
+            self.assertEqual(window.jobs[0]["settings"].get("rotate"), 90)
+        finally:
+            window.close()
+
+    def test_rotate_left_and_right_wrap_around(self):
+        from mainwindow import MainWindow
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.png"))
+            self.app.processEvents()
+
+            window.btn_rotate_left.click()
+            self.assertEqual(window.jobs[0]["settings"]["rotate"], 270)
+            window.btn_rotate_right.click()
+            self.assertEqual(window.jobs[0]["settings"]["rotate"], 0)
+            # rotate=0 braucht keinen Filter
+            self.assertNotIn("-vf", window.edit_cmd_preview.toPlainText())
+
+            window.btn_rotate_right.click()
+            window.btn_rotate_right.click()
+            window.btn_rotate_right.click()
+            self.assertEqual(window.jobs[0]["settings"]["rotate"], 270)
+        finally:
+            window.close()
+
+    def test_rotating_resets_existing_crop(self):
+        from mainwindow import MainWindow
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.png"))
+            self.app.processEvents()
+
+            window._on_image_crop_changed({"x": 4, "y": 6, "w": 120, "h": 90})
+            self.assertIn("crop", window.jobs[0]["settings"])
+
+            window.btn_rotate_right.click()
+            self.assertNotIn("crop", window.jobs[0]["settings"])
+            self.assertFalse(window.btn_reset_crop.isEnabled())
+            self.assertIsNone(window.image_preview_label.crop())
+        finally:
+            window.close()
+
+    def test_apply_to_all_does_not_copy_rotate(self):
+        from mainwindow import MainWindow
+        from PyQt6.QtWidgets import QMessageBox
+        from unittest.mock import patch
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.png"))
+            window._add_file_to_queue(os.path.abspath("test_input.png"))
+            self.app.processEvents()
+            window.queue_table.selectRow(0)
+            self.app.processEvents()
+            window.btn_rotate_right.click()
+
+            with patch.object(QMessageBox, "question",
+                              return_value=QMessageBox.StandardButton.Yes):
+                window._on_apply_settings_to_all_clicked()
+            self.app.processEvents()
+
+            self.assertIn("rotate", window.jobs[0]["settings"])
+            self.assertNotIn("rotate", window.jobs[1]["settings"])
+        finally:
+            window.close()
+
+    def test_rotate_90_swaps_aspect_ratio_for_fit_mode(self):
+        from mainwindow import MainWindow
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.png"))  # 320x240
+            self.app.processEvents()
+            wait_for_source_probe(self.app, window.jobs[0])
+
+            window.combo_scale_mode.setCurrentText("Seitenverhältnis beibehalten")
+            self.app.processEvents()
+            window.btn_rotate_right.click()
+
+            # Nach 90°-Drehung ist die Quelle effektiv 240x320 (Hochformat)
+            window.spin_width.setValue(240)
+            self.assertEqual(window.spin_height.value(), 320)
         finally:
             window.close()
 

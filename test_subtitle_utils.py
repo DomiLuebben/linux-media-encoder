@@ -4,6 +4,20 @@ import subtitle_utils
 
 
 class SubtitleUtilsTest(unittest.TestCase):
+    def test_antigravity_args_use_sandbox_and_stdin(self):
+        self.assertEqual(
+            subtitle_utils.build_ai_args("agy", "sehr langer prompt"),
+            ["--sandbox", "-p", "-"],
+        )
+        self.assertEqual(
+            subtitle_utils.build_ai_args("antigravity-cli", "prompt"),
+            ["--sandbox", "-p", "-"],
+        )
+        self.assertEqual(
+            subtitle_utils.build_ai_args("claude", "prompt"),
+            ["-p", "prompt"],
+        )
+
     def test_merge_translation_preserves_source_indices_and_timecodes(self):
         source = """1
 00:00:01,000 --> 00:00:03,500
@@ -51,6 +65,27 @@ Test.
         self.assertIn("Timecode-Zeile exakt bei", prompt)
         self.assertIn("direkt vorherigen oder direkt folgenden Block", prompt)
         self.assertIn("niemals Timecodes anpassen", prompt)
+
+    def test_merge_mismatched_indices_raises_value_error(self):
+        source = """1
+00:00:01,000 --> 00:00:03,500
+Hallo Welt.
+
+2
+00:00:04,000 --> 00:00:06,000
+Wie geht es dir?
+"""
+        # Translated SRT with indices out of sequence (1, 3) instead of (1, 2)
+        translated = """1
+00:00:01,000 --> 00:00:03,500
+Hello world.
+
+3
+00:00:04,000 --> 00:00:06,000
+How are you?
+"""
+        with self.assertRaises(ValueError):
+            subtitle_utils.merge_translated_text_with_source_timecodes(source, translated)
 
 
 if __name__ == "__main__":
