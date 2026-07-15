@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Shared helpers for AI generated SubRip subtitles.
-"""
+"""Shared helpers for locally generated SubRip subtitles."""
 
 from dataclasses import dataclass
 import os
@@ -33,8 +31,9 @@ def resolve_language(choice, custom=""):
 
 
 def choose_ai_cli():
-    if shutil.which("antigravity-cli"):
-        return "antigravity-cli"
+    for command in ("antigravity-cli", "agy", "claude"):
+        if shutil.which(command):
+            return command
     return "agy"
 
 

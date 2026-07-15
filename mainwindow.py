@@ -18,6 +18,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QFont, QIcon, QPixmap, QTransform
 
+from i18n import (
+    QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox, QLabel,
+    LocalizedString, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
+    QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QWidget, tr,
+)
+
 import presets
 import styles
 import subtitle_utils
@@ -69,7 +75,9 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         # Statusleiste + Gesamtfortschritt der Warteschlange
-        self.statusBar().showMessage("Bereit — Dateien per Drag & Drop oder über „Hinzufügen“ laden.")
+        self.statusBar().showMessage(tr(
+            "Bereit — Dateien per Drag & Drop oder über „Hinzufügen“ laden."
+        ))
         self.queue_progress = QProgressBar()
         self.queue_progress.setMaximumWidth(220)
         self.queue_progress.setFormat("Warteschlange %p %")
@@ -111,7 +119,7 @@ class MainWindow(QMainWindow):
         """Erstellt Menüleiste und Haupt-Toolbar."""
         menubar = self.menuBar()
 
-        file_menu = menubar.addMenu("Datei")
+        file_menu = menubar.addMenu(tr("Datei"))
         add_action = QAction("Datei(en) hinzufügen...", self)
         add_action.triggered.connect(self._on_add_files_clicked)
         file_menu.addAction(add_action)
@@ -120,12 +128,12 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        edit_menu = menubar.addMenu("Bearbeiten")
+        edit_menu = menubar.addMenu(tr("Bearbeiten"))
         trim_menu_action = QAction("Video verkürzen (Schnitt)...", self)
         trim_menu_action.triggered.connect(self._on_trim_video_clicked)
         edit_menu.addAction(trim_menu_action)
         
-        theme_menu = menubar.addMenu("Design")
+        theme_menu = menubar.addMenu(tr("Design"))
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
         self.dark_action = QAction("Breeze Dark (LME)", self)
@@ -139,7 +147,7 @@ class MainWindow(QMainWindow):
         theme_group.addAction(self.native_action)
         theme_menu.addAction(self.native_action)
 
-        view_menu = menubar.addMenu("Ansicht")
+        view_menu = menubar.addMenu(tr("Ansicht"))
         self.action_toggle_ffmpeg_view = QAction("FFmpeg-Ausgabe && Befehl anzeigen", self)
         self.action_toggle_ffmpeg_view.setCheckable(True)
         self.action_toggle_ffmpeg_view.setChecked(False)
@@ -148,7 +156,7 @@ class MainWindow(QMainWindow):
 
         # Nach Abschluss der Warteschlange: optional Energie-Aktion ausführen.
         # Bewusst NICHT persistent — ein vergessenes "Herunterfahren" wäre fatal.
-        queue_menu = menubar.addMenu("Warteschlange")
+        queue_menu = menubar.addMenu(tr("Warteschlange"))
         power_group = QActionGroup(self)
         power_group.setExclusive(True)
         self.power_actions = {}
@@ -164,13 +172,13 @@ class MainWindow(QMainWindow):
             self.power_actions[key] = action
         self.power_actions["none"].setChecked(True)
 
-        help_menu = menubar.addMenu("Hilfe")
+        help_menu = menubar.addMenu(tr("Hilfe"))
         about_action = QAction("Über Linux Media Encoder", self)
         about_action.triggered.connect(self._on_about_clicked)
         help_menu.addAction(about_action)
 
         # Toolbar
-        self.toolbar = QToolBar("Hauptsteuerung", self)
+        self.toolbar = QToolBar(tr("Hauptsteuerung"), self)
         self.toolbar.setIconSize(QSize(20, 20))
         self.toolbar.setMovable(False)
         self.addToolBar(self.toolbar)
@@ -304,14 +312,14 @@ class MainWindow(QMainWindow):
         # Bildformate erscheinen nur bei Bild-Quellen; Start mit Video-Liste.
         self._format_options_are_image = False
         self.combo_format.addItems(presets.get_format_options(False))
-        self.combo_format.currentTextChanged.connect(self._on_format_changed)
+        self.combo_format.sourceTextChanged.connect(self._on_format_changed)
         export_layout.addWidget(self.combo_format, 0, 1)
 
         # 2. Preset (ebenfalls nicht editierbar, gleiche Begründung)
         export_layout.addWidget(QLabel("Vorgabe:"), 1, 0)
         self.combo_preset = QComboBox()
         self.combo_preset.addItems(presets.get_preset_dropdown_options(False))
-        self.combo_preset.currentTextChanged.connect(self._on_preset_changed)
+        self.combo_preset.sourceTextChanged.connect(self._on_preset_changed)
         export_layout.addWidget(self.combo_preset, 1, 1)
         
         # 3. Ausgabepfad als blauer Link
@@ -370,7 +378,7 @@ class MainWindow(QMainWindow):
         self.combo_vcodec = QComboBox()
         self.combo_vcodec.setEditable(True)
         self.combo_vcodec.addItems(["libx264", "libx265", "libvpx-vp9", "libsvtav1", "copy", "none"])
-        self.combo_vcodec.currentTextChanged.connect(self._on_vcodec_changed)
+        self.combo_vcodec.sourceTextChanged.connect(self._on_vcodec_changed)
         v_grid.addWidget(self.combo_vcodec, 0, 1)
         
         # Skalierung (Quelle beibehalten / einpassen / verzerren)
@@ -378,7 +386,7 @@ class MainWindow(QMainWindow):
         v_grid.addWidget(self.lbl_scale_mode, 1, 0)
         self.combo_scale_mode = QComboBox()
         self.combo_scale_mode.addItems(presets.scale_mode_options())
-        self.combo_scale_mode.currentTextChanged.connect(self._on_scale_mode_changed)
+        self.combo_scale_mode.sourceTextChanged.connect(self._on_scale_mode_changed)
         v_grid.addWidget(self.combo_scale_mode, 1, 1)
 
         # Breite / Höhe
@@ -405,7 +413,7 @@ class MainWindow(QMainWindow):
         self.combo_fps.setEditable(True)
         self.combo_fps.addItems([presets.FPS_SOURCE_LABEL, "23.976", "24", "25", "29.97", "30", "50", "60"])
         self.combo_fps.setCurrentText("25")
-        self.combo_fps.currentTextChanged.connect(self._save_ui_settings_to_job)
+        self.combo_fps.sourceTextChanged.connect(self._save_ui_settings_to_job)
         v_grid.addWidget(self.combo_fps, 4, 1)
 
         # Profile
@@ -415,7 +423,7 @@ class MainWindow(QMainWindow):
         self.combo_profile.setEditable(True)
         self.combo_profile.addItems(["Main", "High", "Baseline"])
         self.combo_profile.setCurrentText("High")
-        self.combo_profile.currentTextChanged.connect(self._save_ui_settings_to_job)
+        self.combo_profile.sourceTextChanged.connect(self._save_ui_settings_to_job)
         v_grid.addWidget(self.combo_profile, 5, 1)
 
         # Bitrate-Codierung
@@ -423,7 +431,7 @@ class MainWindow(QMainWindow):
         v_grid.addWidget(self.lbl_video_encoding, 6, 0)
         self.combo_encoding = QComboBox()
         self.combo_encoding.addItems(["VBR, 1 Durchgang", "CBR", "CRF (Qualitätsbasiert)"])
-        self.combo_encoding.currentTextChanged.connect(self._on_encoding_method_changed)
+        self.combo_encoding.sourceTextChanged.connect(self._on_encoding_method_changed)
         v_grid.addWidget(self.combo_encoding, 6, 1)
 
         # Target Bitrate / CRF mit synchronisiertem Schieberegler
@@ -472,7 +480,7 @@ class MainWindow(QMainWindow):
         self.combo_audiocodec = QComboBox()
         self.combo_audiocodec.setEditable(True)
         self.combo_audiocodec.addItems(["AAC", "MP3", "Opus", "FLAC", "Kopieren (Copy)"])
-        self.combo_audiocodec.currentTextChanged.connect(self._on_audio_codec_changed)
+        self.combo_audiocodec.sourceTextChanged.connect(self._on_audio_codec_changed)
         a_grid.addWidget(self.combo_audiocodec, 0, 1)
         
         # Audio Bitrate
@@ -481,7 +489,7 @@ class MainWindow(QMainWindow):
         self.combo_audiobitrate.setEditable(True)
         self.combo_audiobitrate.addItems(["128k", "192k", "256k", "320k"])
         self.combo_audiobitrate.setCurrentText("192k")
-        self.combo_audiobitrate.currentTextChanged.connect(self._save_ui_settings_to_job)
+        self.combo_audiobitrate.sourceTextChanged.connect(self._save_ui_settings_to_job)
         a_grid.addWidget(self.combo_audiobitrate, 1, 1)
         
         a_tab_layout.addLayout(a_grid)
@@ -519,7 +527,7 @@ class MainWindow(QMainWindow):
             "Italienisch",
             "Andere..."
         ])
-        self.combo_sub_source.currentTextChanged.connect(self._on_sub_source_changed)
+        self.combo_sub_source.sourceTextChanged.connect(self._on_sub_source_changed)
         source_layout.addWidget(self.combo_sub_source)
         
         self.edit_sub_source_custom = QLineEdit()
@@ -544,7 +552,7 @@ class MainWindow(QMainWindow):
             "Italienisch",
             "Andere..."
         ])
-        self.combo_sub_translate.currentTextChanged.connect(self._on_sub_translate_changed)
+        self.combo_sub_translate.sourceTextChanged.connect(self._on_sub_translate_changed)
         translate_layout.addWidget(self.combo_sub_translate)
         
         self.edit_sub_translate_custom = QLineEdit()
@@ -588,7 +596,7 @@ class MainWindow(QMainWindow):
             "Hard-Untertitel (in Video einbrennen)",
             "Nur externe .srt-Datei erzeugen"
         ])
-        self.combo_sub_mode.currentTextChanged.connect(self._save_ui_settings_to_job)
+        self.combo_sub_mode.sourceTextChanged.connect(self._save_ui_settings_to_job)
         sub_grid.addWidget(self.combo_sub_mode, 6, 1)
         
         sub_tab_layout.addLayout(sub_grid)
@@ -772,13 +780,19 @@ class MainWindow(QMainWindow):
     def _update_crop_ui(self, crop):
         """Aktualisiert Zuschnitt-/Dreh-Statuszeile und Aufheben-Button."""
         if crop:
-            text = f"Zuschnitt: {crop['w']}×{crop['h']} px ab ({crop['x']}, {crop['y']})"
+            text = tr(
+                "Zuschnitt: {width}×{height} px ab ({x}, {y})",
+                width=crop["w"], height=crop["h"], x=crop["x"], y=crop["y"],
+            )
             self.btn_reset_crop.setEnabled(True)
         else:
-            text = "Kein Zuschnitt — Rechteck mit der Maus über das Bild ziehen."
+            text = tr("Kein Zuschnitt — Rechteck mit der Maus über das Bild ziehen.")
             self.btn_reset_crop.setEnabled(False)
         if self._image_preview_rotation:
-            text += f" · Gedreht um {self._image_preview_rotation}°"
+            text = tr(
+                "{crop} · Gedreht um {angle}°",
+                crop=str(text), angle=self._image_preview_rotation,
+            )
         self.image_crop_info_label.setText(text)
 
     def _on_rotate_clicked(self, delta):
@@ -931,9 +945,10 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.ForegroundRole, None)
         # Fehlerdetails bzw. Schnellzugriff direkt an der Zeile verfügbar machen
         if job["status"] == "Fehlgeschlagen" and job.get("error_tail"):
-            item.setToolTip(
-                "Doppelklick für Details.\n\nLetzte FFmpeg-Meldungen:\n" + job["error_tail"]
-            )
+            item.setToolTip(tr(
+                "Doppelklick für Details.\n\nLetzte FFmpeg-Meldungen:\n{details}",
+                details=job["error_tail"],
+            ))
         elif job["status"] == "Fertig":
             item.setToolTip("Doppelklick: Ausgabedatei abspielen")
         else:
@@ -946,15 +961,18 @@ class MainWindow(QMainWindow):
         link_font.setUnderline(True)
 
         settings = job.get("settings", {})
-        preset_name = presets.preset_label(settings)
+        preset_name = tr(presets.preset_label(settings))
         # Beschnittene Jobs in der Queue kenntlich machen, damit niemand
         # versehentlich gekürzt exportiert.
         trim = presets.trim_label(settings)
-        preset_text = f"{preset_name} · {trim}" if trim else preset_name
-        preset_tip = f"{preset_name}\nSchnitt: {trim}" if trim else preset_name
+        if trim.endswith("Ende"):
+            trim = trim[:-4] + tr("Ende")
+        preset_text = tr("{preset} · {trim}", preset=preset_name, trim=trim) if trim else preset_name
+        preset_tip = tr("{preset}\nSchnitt: {trim}", preset=preset_name, trim=trim) if trim else preset_name
         cells = [
             (1, presets.format_label(settings),
-             f"{settings.get('container', '')}".upper() + " — klicken für Exporteinstellungen"),
+             tr("{container} — klicken für Exporteinstellungen",
+                container=f"{settings.get('container', '')}".upper())),
             (2, preset_text, preset_tip),
             (3, os.path.basename(job["output_file"]), job["output_file"]),
         ]
@@ -976,7 +994,10 @@ class MainWindow(QMainWindow):
 
         # 0. Datei
         file_item = QTableWidgetItem(os.path.basename(job["input_file"]))
-        file_item.setToolTip(f"Quelle: {job['input_file']}\nZiel: {job['output_file']}")
+        file_item.setToolTip(tr(
+            "Quelle: {source}\nZiel: {target}",
+            source=job["input_file"], target=job["output_file"],
+        ))
         file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.queue_table.setItem(row, 0, file_item)
 
@@ -1011,7 +1032,10 @@ class MainWindow(QMainWindow):
 
         job = self.jobs[idx]
 
-        self.queue_table.item(idx, 0).setToolTip(f"Quelle: {job['input_file']}\nZiel: {job['output_file']}")
+        self.queue_table.item(idx, 0).setToolTip(tr(
+            "Quelle: {source}\nZiel: {target}",
+            source=job["input_file"], target=job["output_file"],
+        ))
         self._apply_link_cells(idx, job)
         self._apply_status_cell(idx, job)
 
@@ -1044,7 +1068,10 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Fehlerdetails")
-        box.setText(f"Job fehlgeschlagen: {os.path.basename(job['input_file'])}")
+        box.setText(tr(
+            "Job fehlgeschlagen: {filename}",
+            filename=os.path.basename(job["input_file"]),
+        ))
         box.setDetailedText(job.get("error_tail") or "Keine FFmpeg-Ausgabe aufgezeichnet.")
         box.exec()
 
@@ -1429,47 +1456,68 @@ class MainWindow(QMainWindow):
         a_bitrate = settings.get("audio_bitrate", "")
         scale_mode = presets.get_scale_mode(settings)
         keep_source_size = scale_mode == presets.SCALE_MODE_SOURCE
-        scale_note = " (verzerrt)" if scale_mode == presets.SCALE_MODE_STRETCH else ""
+        scale_note = str(tr(" (verzerrt)")) if scale_mode == presets.SCALE_MODE_STRETCH else ""
 
         rate_mode = "CBR" if settings.get("encoding_mode") == "cbr" else "VBR"
 
         is_image = str(settings.get("container", "")).lower() in presets.IMAGE_CONTAINERS
         if is_image:
-            size_info = "Quelle beibehalten" if keep_source_size else f"{self.spin_width.value()}x{self.spin_height.value()}{scale_note}"
+            size_info = str(tr("Quelle beibehalten")) if keep_source_size else f"{self.spin_width.value()}x{self.spin_height.value()}{scale_note}"
             crop = presets.get_crop(settings)
             if crop:
-                size_info = f"Zuschnitt {crop['w']}x{crop['h']}, {size_info}"
+                size_info = str(tr(
+                    "Zuschnitt {width}x{height}, {size}",
+                    width=crop["w"], height=crop["h"], size=size_info,
+                ))
             rotate = presets.get_rotation(settings)
             if rotate:
-                size_info = f"{size_info}, gedreht {rotate}°"
+                size_info = str(tr(
+                    "{size}, gedreht {angle}°", size=size_info, angle=rotate
+                ))
             quality = settings.get("image_quality", 90)
-            quality_info = "verlustfrei" if vcodec == "png" else f"Qualität {quality} %"
-            v_sum = f"Bild: {presets.format_label(settings)}, {size_info}, {quality_info}"
+            quality_info = str(tr("verlustfrei")) if vcodec == "png" else str(tr(
+                "Qualität {quality} %", quality=quality
+            ))
+            v_sum = str(tr(
+                "Bild: {format}, {size}, {quality}",
+                format=presets.format_label(settings), size=size_info,
+                quality=quality_info,
+            ))
         elif vcodec == "none":
-            v_sum = "Kein Video"
+            v_sum = str(tr("Kein Video"))
         elif vcodec == "copy":
-            v_sum = "Video: Kopieren (Stream Copy)"
+            v_sum = str(tr("Video: Kopieren (Stream Copy)"))
         elif keep_source_size:
             v_encoding = f"CRF {crf}" if crf else f"{rate_mode} {v_bitrate}"
-            v_sum = f"Video: {vcodec}, Quelle beibehalten, {v_encoding}"
+            v_sum = str(tr(
+                "Video: {codec}, Quelle beibehalten, {encoding}",
+                codec=vcodec, encoding=v_encoding,
+            ))
         else:
             v_encoding = f"CRF {crf}" if crf else f"{rate_mode} {v_bitrate}"
-            v_sum = f"Video: {vcodec}, {self.spin_width.value()}x{self.spin_height.value()}{scale_note} ({self.combo_fps.currentText()} fps), {v_encoding}"
+            v_sum = str(tr(
+                "Video: {codec}, {width}x{height}{scale_note} ({fps} fps), {encoding}",
+                codec=vcodec, width=self.spin_width.value(),
+                height=self.spin_height.value(), scale_note=scale_note,
+                fps=self.combo_fps.currentText(), encoding=v_encoding,
+            ))
             
         if acodec == "none":
-            a_sum = "Kein Audio"
+            a_sum = str(tr("Kein Audio"))
         elif acodec == "copy":
-            a_sum = "Audio: Kopieren (Stream Copy)"
+            a_sum = str(tr("Audio: Kopieren (Stream Copy)"))
         else:
-            a_sum = f"Audio: {acodec}, {a_bitrate}"
+            a_sum = str(tr("Audio: {codec}, {bitrate}", codec=acodec, bitrate=a_bitrate))
             
-        summary = (
-            f"<b>Quelle:</b> {in_file}<br>"
-            f"<b>Ausgabe:</b> {os.path.basename(job['output_file'])}<br>"
-            f"{v_sum}"
+        summary = tr(
+            "<b>Quelle:</b> {input}<br><b>Ausgabe:</b> {output}<br>{video}",
+            input=in_file, output=os.path.basename(job["output_file"]),
+            video=v_sum,
         )
         if not is_image:
-            summary += f"<br>{a_sum}"
+            summary = LocalizedString(
+                str(summary) + f"<br>{a_sum}", summary.source_text
+            )
         self.summary_box.setText(summary)
 
     def _update_command_preview(self, job):
@@ -1999,7 +2047,8 @@ class MainWindow(QMainWindow):
 
         ext = job["settings"].get("container", "mp4")
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Ausgabedatei festlegen", job["output_file"], f"Format (*.{ext});;Alle Dateien (*)"
+            self, "Ausgabedatei festlegen", job["output_file"],
+            tr("Format (*.{ext});;Alle Dateien (*)", ext=ext),
         )
         if file_path:
             job["output_file"] = file_path
@@ -2039,7 +2088,9 @@ class MainWindow(QMainWindow):
         selected_row = self.queue_table.currentRow()
         if 0 <= selected_row < len(self.jobs):
             self._load_job_settings_to_ui(self.jobs[selected_row])
-        self.statusBar().showMessage(f"Ausgabeordner auf {changed} Job(s) angewendet.")
+        self.statusBar().showMessage(tr(
+            "Ausgabeordner auf {count} Job(s) angewendet.", count=changed
+        ))
 
     def _on_apply_output_dir_to_all_clicked(self):
         """Setzt einen Ausgabeordner fuer alle Jobs in der Warteschlange."""
@@ -2084,7 +2135,9 @@ class MainWindow(QMainWindow):
             and presets.is_image_input(self.jobs[idx]["input_file"]) == source_is_image
         ]
         if not target_indexes:
-            self.statusBar().showMessage("Keine passenden Jobs (gleicher Quelltyp) in der Warteschlange.")
+            self.statusBar().showMessage(tr(
+                "Keine passenden Jobs (gleicher Quelltyp) in der Warteschlange."
+            ))
             return
 
         reply = QMessageBox.question(
@@ -2105,7 +2158,10 @@ class MainWindow(QMainWindow):
             self._update_table_row(idx)
 
         self._load_job_settings_to_ui(source_job)
-        self.statusBar().showMessage(f"Einstellungen auf {len(target_indexes)} Job(s) angewendet.")
+        self.statusBar().showMessage(tr(
+            "Einstellungen auf {count} Job(s) angewendet.",
+            count=len(target_indexes),
+        ))
 
     # --- BUTTONS & CONTROLS ---
     def _on_add_files_clicked(self):
@@ -2253,9 +2309,9 @@ class MainWindow(QMainWindow):
         self._update_ui_state()
         if self.current_job_idx != -1 and row + 1 <= self.current_job_idx:
             self.current_job_idx += 1
-        self.statusBar().showMessage(
+        self.statusBar().showMessage(tr(
             "Job dupliziert — Hinweis: gleiche Ausgabedatei, ggf. Zielnamen anpassen."
-        )
+        ))
 
     def _move_job(self, row, delta):
         new_row = row + delta
@@ -2362,11 +2418,14 @@ class MainWindow(QMainWindow):
 
         shown = "\n".join(os.path.basename(p) for p in existing[:6])
         if len(existing) > 6:
-            shown += f"\n… und {len(existing) - 6} weitere"
+            shown += tr("\n… und {count} weitere", count=len(existing) - 6)
         reply = QMessageBox.question(
             self, "Vorhandene Dateien überschreiben?",
-            f"{len(existing)} Zieldatei(en) existieren bereits und werden überschrieben:\n\n"
-            f"{shown}\n\nFortfahren?",
+            tr(
+                "{count} Zieldatei(en) existieren bereits und werden überschrieben:\n\n"
+                "{files}\n\nFortfahren?",
+                count=len(existing), files=shown,
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2485,7 +2544,10 @@ class MainWindow(QMainWindow):
         if restored:
             self.queue_table.selectRow(0)
             self._update_ui_state()
-            self.statusBar().showMessage(f"{restored} Job(s) aus der letzten Sitzung wiederhergestellt.")
+            self.statusBar().showMessage(tr(
+                "{count} Job(s) aus der letzten Sitzung wiederhergestellt.",
+                count=restored,
+            ))
 
     # --- BENACHRICHTIGUNG & ENERGIE-AKTION ---
     def _notify(self, title, body, folder=None):
@@ -2501,7 +2563,7 @@ class MainWindow(QMainWindow):
             if iface.isValid():
                 actions = []
                 if folder and self._connect_notification_actions():
-                    actions = ["open-folder", "Ordner öffnen"]
+                    actions = ["open-folder", tr("Ordner öffnen")]
                 reply = iface.call(
                     "Notify", "Linux Media Encoder", 0, "linux-media-encoder",
                     title, body, actions, {}, 8000,
@@ -2569,9 +2631,15 @@ class MainWindow(QMainWindow):
                 box.accept()
                 QProcess.startDetached("systemctl", [action])
                 return
-            box.setText(f"{label} in {remaining['sec']} Sekunden …\n\nAbbrechen, um am System zu bleiben.")
+            box.setText(tr(
+                "{action} in {seconds} Sekunden …\n\nAbbrechen, um am System zu bleiben.",
+                action=tr(label), seconds=remaining["sec"],
+            ))
 
-        box.setText(f"{label} in {remaining['sec']} Sekunden …\n\nAbbrechen, um am System zu bleiben.")
+        box.setText(tr(
+            "{action} in {seconds} Sekunden …\n\nAbbrechen, um am System zu bleiben.",
+            action=tr(label), seconds=remaining["sec"],
+        ))
         timer.timeout.connect(tick)
         timer.start(1000)
         box.exec()
@@ -2624,13 +2692,16 @@ class MainWindow(QMainWindow):
             self.console.append("[LME WARTSCHLANGE] Alle Jobs verarbeitet.")
             done = sum(1 for j in self.jobs if j["status"] == "Fertig")
             failed = sum(1 for j in self.jobs if j["status"] == "Fehlgeschlagen")
-            summary = f"Warteschlange abgeschlossen — {done}/{len(self.jobs)} Jobs fertig."
+            summary = tr(
+                "Warteschlange abgeschlossen — {done}/{total} Jobs fertig.",
+                done=done, total=len(self.jobs),
+            )
             self.statusBar().showMessage(summary)
             # Desktop-Benachrichtigung statt modalem Dialog: blockiert nichts
             # und ist auch sichtbar, wenn das Fenster im Hintergrund liegt.
-            body = f"{done} Job(s) fertig"
+            body = tr("{count} Job(s) fertig", count=done)
             if failed:
-                body += f", {failed} fehlgeschlagen"
+                body += tr(", {count} fehlgeschlagen", count=failed)
             folder = next(
                 (os.path.dirname(j["output_file"]) for j in self.jobs if j["status"] == "Fertig"),
                 None,
@@ -2693,10 +2764,13 @@ class MainWindow(QMainWindow):
             )
             QMessageBox.warning(
                 self, "Ungültige Ausgabedatei",
-                "Die Ausgabedatei ist identisch mit einer Quelldatei der Warteschlange:\n"
-                f"{conflicting_input}\n\n"
-                "Bitte einen anderen Zielnamen/-ordner wählen, sonst würde die "
-                "Originaldatei zerstört. Der Job wurde übersprungen.",
+                tr(
+                    "Die Ausgabedatei ist identisch mit einer Quelldatei der Warteschlange:\n"
+                    "{path}\n\n"
+                    "Bitte einen anderen Zielnamen/-ordner wählen, sonst würde die "
+                    "Originaldatei zerstört. Der Job wurde übersprungen.",
+                    path=conflicting_input,
+                ),
             )
             # Entkoppelt weitermachen — direkte Rekursion würde bei vielen
             # übersprungenen Jobs den Call-Stack aufblähen.
@@ -2969,10 +3043,13 @@ class MainWindow(QMainWindow):
         job["speed"] = speed
         job["time_remaining"] = time_remaining
         self._update_table_row(self.current_job_idx)
-        self.statusBar().showMessage(
-            f"Codiere {os.path.basename(job['input_file'])} — {percent:.0f} % · {speed} · noch {time_remaining}"
-            f"  (Job {self.current_job_idx + 1}/{len(self.jobs)})"
-        )
+        self.statusBar().showMessage(tr(
+            "Codiere {filename} — {percent:.0f} % · {speed} · noch {remaining}  "
+            "(Job {current}/{total})",
+            filename=os.path.basename(job["input_file"]), percent=percent,
+            speed=speed, remaining=time_remaining,
+            current=self.current_job_idx + 1, total=len(self.jobs),
+        ))
         # Gesamtfortschritt über alle Jobs des Laufs
         if self._run_total > 0:
             overall = (self._run_done + percent / 100.0) / self._run_total * 100.0
@@ -3146,8 +3223,11 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "Über Linux Media Encoder",
-            f"<h3>Linux Media Encoder v{__version__}</h3>"
-            "<p>Ein getreues, professionelles GUI-Werkzeug für FFmpeg, inspiriert vom Adobe Media Encoder.</p>"
-            "<p>Entwickelt mit Python 3 und PyQt6.</p>"
-            "<p>© 2026</p>"
+            tr(
+                "<h3>Linux Media Encoder v{version}</h3>"
+                "<p>Ein getreues, professionelles GUI-Werkzeug für FFmpeg, inspiriert vom Adobe Media Encoder.</p>"
+                "<p>Entwickelt mit Python 3 und PyQt6.</p>"
+                "<p>© 2026</p>",
+                version=__version__,
+            )
         )

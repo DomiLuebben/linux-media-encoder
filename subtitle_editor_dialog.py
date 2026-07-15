@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Untertitel-Editor (Subtitle Editor) Dialog für den Linux Media Encoder.
-Führt die Transkription/Übersetzung asynchron via agy/Antigravity aus und
-erlaubt dem Benutzer, die automatisch erzeugten Untertitel (SRT) zu prüfen.
-"""
+"""Subtitle editor using a compatible local AI CLI asynchronously."""
 
 import os
 import tempfile
@@ -11,6 +7,11 @@ from PyQt6.QtCore import QProcess, Qt
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton,
     QProgressBar, QMessageBox
+)
+
+from i18n import (
+    QDialog, QFileDialog, QLabel, QMessageBox, QProgressBar, QPushButton,
+    QTextEdit, tr,
 )
 
 import subtitle_utils
@@ -49,7 +50,9 @@ class SubtitleEditorDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         
         # Info label
-        self.lbl_info = QLabel(f"Video: {os.path.basename(self.input_file)}")
+        self.lbl_info = QLabel(tr(
+            "Video: {filename}", filename=os.path.basename(self.input_file)
+        ))
         self.lbl_info.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.lbl_info)
         
@@ -108,7 +111,7 @@ class SubtitleEditorDialog(QDialog):
         self.sub_process.start("ffmpeg", args)
         
     def _on_audio_extracted(self, exit_code, exit_status):
-        """Phase 2: Audiospur an agy / Antigravity übergeben."""
+        """Phase 2: pass the extracted audio to the local AI CLI."""
         if exit_code != 0 or not os.path.exists(self.temp_audio_path) or os.path.getsize(self.temp_audio_path) == 0:
             self.lbl_status.setText("Fehler: Audio-Extraktion fehlgeschlagen.")
             self.progress_bar.setVisible(False)
@@ -147,12 +150,15 @@ class SubtitleEditorDialog(QDialog):
             self._cleanup_temp_files()
             self.progress_bar.setVisible(False)
             if self.ai_stage == "translate" and self.source_srt_content:
-                self.lbl_status.setText(
-                    f"KI-Übersetzung fehlgeschlagen, verwende Original-Transkription: {err}"
-                )
+                self.lbl_status.setText(tr(
+                    "KI-Übersetzung fehlgeschlagen, verwende Original-Transkription: {error}",
+                    error=err,
+                ))
                 self._finish_srt(self.source_srt_content)
             else:
-                self.lbl_status.setText(f"Fehler bei KI-Transkription: {err}")
+                self.lbl_status.setText(tr(
+                    "Fehler bei KI-Transkription: {error}", error=err
+                ))
             return
             
         output = self.sub_ai_process.readAllStandardOutput().data().decode("utf-8", errors="replace").strip()
@@ -163,7 +169,10 @@ class SubtitleEditorDialog(QDialog):
                 self.source_srt_content = subtitle_utils.normalize_srt(output)
             except ValueError as e:
                 self.progress_bar.setVisible(False)
-                self.lbl_status.setText(f"Fehler: KI hat keine validen SRT-Untertitel geliefert ({e}).")
+                self.lbl_status.setText(tr(
+                    "Fehler: KI hat keine validen SRT-Untertitel geliefert ({error}).",
+                    error=e,
+                ))
                 return
 
             if self.target_lang != subtitle_utils.NO_TRANSLATION:
@@ -186,9 +195,10 @@ class SubtitleEditorDialog(QDialog):
             )
         except ValueError as e:
             translated_srt = self.source_srt_content
-            self.lbl_status.setText(
-                f"Übersetzung hatte eine ungültige SRT-Struktur; Timecodes bleiben erhalten. ({e})"
-            )
+            self.lbl_status.setText(tr(
+                "Übersetzung hatte eine ungültige SRT-Struktur; Timecodes bleiben erhalten. ({error})",
+                error=e,
+            ))
 
         self.progress_bar.setVisible(False)
         self._finish_srt(translated_srt)
@@ -216,12 +226,14 @@ class SubtitleEditorDialog(QDialog):
         if os.path.exists(file_path):
             reply = QMessageBox.question(
                 self, "Datei überschreiben?",
-                f"Die Datei existiert bereits:\n{file_path}\n\nÜberschreiben?",
+                tr(
+                    "Die Datei existiert bereits:\n{path}\n\nÜberschreiben?",
+                    path=file_path,
+                ),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
-                from PyQt6.QtWidgets import QFileDialog
                 file_path, _ = QFileDialog.getSaveFileName(
                     self, "Untertitel speichern unter", file_path,
                     "SubRip Untertitel (*.srt)"
@@ -235,7 +247,10 @@ class SubtitleEditorDialog(QDialog):
             self.saved_srt_path = file_path
             self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Schreibfehler", f"Die Datei konnte nicht gespeichert werden:\n{e}")
+            QMessageBox.critical(
+                self, "Schreibfehler",
+                tr("Die Datei konnte nicht gespeichert werden:\n{error}", error=e),
+            )
                 
     def get_saved_srt_path(self):
         return self.saved_srt_path

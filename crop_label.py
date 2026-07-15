@@ -9,6 +9,8 @@ from PyQt6.QtCore import Qt, QPoint, QRect, QSize, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QRegion
 from PyQt6.QtWidgets import QLabel
 
+from i18n import QLabel
+
 
 class CropImageLabel(QLabel):
     """QLabel-Vorschau, auf der per Maus ein Zuschnitt gewählt werden kann.

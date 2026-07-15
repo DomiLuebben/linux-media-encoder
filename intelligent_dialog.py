@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Intelligenter Bitraten-Rechner Dialog für den Linux Media Encoder.
-Bietet AI-basierte Bitratenberechnung mit lokalem Claude- und Antigravity-Support sowie Formel-Fallback.
-"""
+"""Intelligent bitrate calculator with a local AI CLI and formula fallback."""
 
 import json
 import re
@@ -11,6 +8,8 @@ from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QSpinBox, QDoubleSpinBox, QPushButton, QDialogButtonBox, QProgressBar, QComboBox,
 )
+
+from i18n import QComboBox, QDialog, QLabel, QProgressBar, QPushButton, QWidget, tr
 
 import subtitle_utils
 
@@ -59,10 +58,11 @@ class IntelligentBitrateDialog(QDialog):
         self.lbl_codec.setStyleSheet("font-weight: bold;")
         grid.addWidget(self.lbl_codec, 2, 1)
         
-        # AI Engine choice
+        # Local AI engine selection is automatic so the UI remains independent
+        # of whichever compatible command-line provider is installed.
         grid.addWidget(QLabel("Berechnungs-Engine:"), 3, 0)
         self.combo_engine = QComboBox()
-        self.combo_engine.addItems(["Claude AI", "Antigravity AI"])
+        self.combo_engine.addItem("Lokale KI (automatisch)")
         grid.addWidget(self.combo_engine, 3, 1)
         
         layout.addLayout(grid)
@@ -117,8 +117,8 @@ class IntelligentBitrateDialog(QDialog):
         )
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
-        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("OK")
-        self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Abbrechen")
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText(tr("OK"))
+        self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("Abbrechen"))
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         layout.addWidget(self.button_box)
 
@@ -149,10 +149,11 @@ class IntelligentBitrateDialog(QDialog):
             self.lbl_res_vbitrate.setText("Nicht erreichbar")
             self.lbl_res_abitrate.setText("Nicht erreichbar")
             self.result_group.setVisible(True)
-            self.lbl_status.setText(
+            self.lbl_status.setText(tr(
                 "Zielgröße zu klein für die minimalen Audio-/Video-Bitraten "
-                f"(mindestens {minimum_size_mb:.1f} MB bei dieser Dauer)."
-            )
+                "(mindestens {size:.1f} MB bei dieser Dauer).",
+                size=minimum_size_mb,
+            ))
             self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
             return
 
@@ -185,7 +186,7 @@ class IntelligentBitrateDialog(QDialog):
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
 
     def _calculate_ai(self):
-        """Berechnet Bitraten asynchron über das installierte AI-Tool (Claude oder Antigravity)."""
+        """Calculate bitrates asynchronously using the installed local AI CLI."""
         duration = self.spin_duration.value()
         target_size_mb = self.spin_size.value()
         codec = self.codec
@@ -209,19 +210,18 @@ class IntelligentBitrateDialog(QDialog):
         self.btn_calc_ai.setEnabled(False)
         self.btn_calc_formula.setEnabled(False)
         self.progress_bar.setVisible(True)
-        self.lbl_status.setText(f"{engine} berechnet Bitraten...")
+        self.lbl_status.setText(tr(
+            "{engine} berechnet Bitraten...",
+            engine=tr(engine),
+        ))
         
         self.ai_process = QProcess(self)
         self.ai_process.finished.connect(self._on_ai_finished)
         self.ai_process.errorOccurred.connect(self._on_ai_failed_to_start)
 
-        # Startet das ausgewählte AI-Tool asynchron
-        if "Claude" in engine:
-            cmd = "claude"
-            args = ["-p", prompt]
-        else:
-            cmd = subtitle_utils.choose_ai_cli()
-            args = subtitle_utils.build_ai_args(cmd, prompt)
+        # Start the first compatible local provider found on the system.
+        cmd = subtitle_utils.choose_ai_cli()
+        args = subtitle_utils.build_ai_args(cmd, prompt)
         self.ai_process.start(cmd, args)
         if cmd in ("agy", "antigravity-cli"):
             self.ai_process.write(prompt.encode("utf-8"))
@@ -244,7 +244,10 @@ class IntelligentBitrateDialog(QDialog):
         engine = self.combo_engine.currentText()
         
         if exit_code != 0:
-            self.lbl_status.setText(f"{engine}-Fehler (Exit-Code: {exit_code}). Wechsle zu Schnell-Formel.")
+            self.lbl_status.setText(tr(
+                "{engine}-Fehler (Exit-Code: {code}). Wechsle zu Schnell-Formel.",
+                engine=tr(engine), code=exit_code,
+            ))
             self._calculate_formula()
             return
             
@@ -292,7 +295,9 @@ class IntelligentBitrateDialog(QDialog):
                 self.lbl_res_vbitrate.setText(f"{self.result_video_bitrate_mbps:.2f} Mbps ({v_bit})")
                 self.lbl_res_abitrate.setText(self.result_audio_bitrate_kbps)
                 self.result_group.setVisible(True)
-                self.lbl_status.setText(f"{engine}-Berechnung erfolgreich.")
+                self.lbl_status.setText(tr(
+                    "{engine}-Berechnung erfolgreich.", engine=tr(engine)
+                ))
                 self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
             else:
                 raise ValueError("JSON-Struktur in AI-Ausgabe nicht gefunden.")

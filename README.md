@@ -1,6 +1,6 @@
 # Linux Media Encoder (LME)
 
-**English** | [Deutsch](README.de.md)
+**English** | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 A professional **FFmpeg** GUI encoder inspired by Adobe Media Encoder, built
 with Python 3 and PyQt6.
@@ -16,7 +16,7 @@ with Python 3 and PyQt6.
 - Audio support for AAC, MP3, Opus, FLAC, and copy; Custom mode exposes all detected FFmpeg video and audio codecs
 - Batch actions for applying video/audio settings or output folders to the entire queue
 - True stream copy: copy video unchanged while re-encoding only the audio track
-- Intelligent bitrate calculator using a local `claude`/`agy` Antigravity CLI with a formula-based fallback
+- Intelligent bitrate calculator using an optional local AI CLI with a formula-based fallback
 - AI subtitles: generate SRT files from audio, optionally translate them, and embed them as soft or hard subtitles
 - Web-optimized MP4/MOV output with `+faststart` and compatible `yuv420p` output for H.264/H.265
 - Live progress, speed, remaining time, overall queue progress, and an optional FFmpeg console

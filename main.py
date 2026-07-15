@@ -9,11 +9,13 @@ import sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from mainwindow import MainWindow
+from i18n import configure_application
 from version import __version__
 
 def main():
     # Anlegen der PyQt-Applikation
     app = QApplication(sys.argv)
+    configure_application(app)
 
     # App-Informationen für Betriebssystem-Integration (Desktop-Datei, QSettings, Notifications)
     app.setApplicationName("Linux Media Encoder")

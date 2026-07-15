@@ -18,6 +18,11 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPixmap, QFont, QPainter, QColor
 
+from i18n import (
+    QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox, QLabel, QLineEdit,
+    LocalizedString, QPushButton, QTabWidget, QWidget, tr,
+)
+
 
 class SeekSlider(QSlider):
     """Timeline-Slider, bei dem ein Klick direkt zur Position springt
@@ -248,14 +253,14 @@ class ExportSettingsDialog(QDialog):
         # Video-/Audio-Quellen (Quelle steht im Dialog fest).
         source_is_image = presets.is_image_input(self.input_file)
         self.combo_format.addItems(presets.get_format_options(source_is_image))
-        self.combo_format.currentTextChanged.connect(self._on_format_changed)
+        self.combo_format.sourceTextChanged.connect(self._on_format_changed)
         export_layout.addWidget(self.combo_format, 0, 1)
 
         # 2. Preset (ebenfalls nicht editierbar, gleiche Begründung)
         export_layout.addWidget(QLabel("Vorgabe:"), 1, 0)
         self.combo_preset = QComboBox()
         self.combo_preset.addItems(presets.get_preset_dropdown_options(source_is_image))
-        self.combo_preset.currentTextChanged.connect(self._on_preset_changed)
+        self.combo_preset.sourceTextChanged.connect(self._on_preset_changed)
         export_layout.addWidget(self.combo_preset, 1, 1)
         
         # 3. Output Name (Als blauer Link exakt wie in AME)
@@ -305,7 +310,7 @@ class ExportSettingsDialog(QDialog):
         self.combo_vcodec = QComboBox()
         self.combo_vcodec.setEditable(True)
         self.combo_vcodec.addItems(["libx264", "libx265", "libvpx-vp9", "libsvtav1", "copy", "none"])
-        self.combo_vcodec.currentTextChanged.connect(self._on_vcodec_changed)
+        self.combo_vcodec.sourceTextChanged.connect(self._on_vcodec_changed)
         v_grid.addWidget(self.combo_vcodec, 0, 1)
         
         # Skalierung (Quelle beibehalten / einpassen / verzerren)
@@ -313,7 +318,7 @@ class ExportSettingsDialog(QDialog):
         v_grid.addWidget(self.lbl_scale_mode, 1, 0)
         self.combo_scale_mode = QComboBox()
         self.combo_scale_mode.addItems(presets.scale_mode_options())
-        self.combo_scale_mode.currentTextChanged.connect(self._on_scale_mode_changed)
+        self.combo_scale_mode.sourceTextChanged.connect(self._on_scale_mode_changed)
         v_grid.addWidget(self.combo_scale_mode, 1, 1)
 
         # Breite / Höhe
@@ -356,7 +361,7 @@ class ExportSettingsDialog(QDialog):
         v_grid.addWidget(self.lbl_video_encoding, 6, 0)
         self.combo_encoding = QComboBox()
         self.combo_encoding.addItems(["VBR, 1 Durchgang", "CBR", "CRF (Qualitätsbasiert)"])
-        self.combo_encoding.currentTextChanged.connect(self._on_encoding_method_changed)
+        self.combo_encoding.sourceTextChanged.connect(self._on_encoding_method_changed)
         v_grid.addWidget(self.combo_encoding, 6, 1)
 
         # Target Bitrate / CRF (Synchronisierter Schieberegler + SpinBox)
@@ -408,7 +413,7 @@ class ExportSettingsDialog(QDialog):
         self.combo_audiocodec = QComboBox()
         self.combo_audiocodec.setEditable(True)
         self.combo_audiocodec.addItems(["AAC", "MP3", "Opus", "FLAC", "Kopieren (Copy)"])
-        self.combo_audiocodec.currentTextChanged.connect(self._on_audio_codec_changed)
+        self.combo_audiocodec.sourceTextChanged.connect(self._on_audio_codec_changed)
         a_grid.addWidget(self.combo_audiocodec, 0, 1)
         
         # Audio Bitrate
@@ -454,7 +459,7 @@ class ExportSettingsDialog(QDialog):
             "Italienisch",
             "Andere..."
         ])
-        self.combo_sub_source.currentTextChanged.connect(self._on_sub_source_changed)
+        self.combo_sub_source.sourceTextChanged.connect(self._on_sub_source_changed)
         source_layout.addWidget(self.combo_sub_source)
         
         self.edit_sub_source_custom = QLineEdit()
@@ -478,7 +483,7 @@ class ExportSettingsDialog(QDialog):
             "Italienisch",
             "Andere..."
         ])
-        self.combo_sub_translate.currentTextChanged.connect(self._on_sub_translate_changed)
+        self.combo_sub_translate.sourceTextChanged.connect(self._on_sub_translate_changed)
         translate_layout.addWidget(self.combo_sub_translate)
         
         self.edit_sub_translate_custom = QLineEdit()
@@ -537,9 +542,9 @@ class ExportSettingsDialog(QDialog):
         
         # Style für OK/Abbrechen Buttons anpassen
         btn_ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        btn_ok.setText("OK")
+        btn_ok.setText(tr("OK"))
         btn_cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        btn_cancel.setText("Abbrechen")
+        btn_cancel.setText(tr("Abbrechen"))
         # Kein Default-Button: Enter in den Timecode-Feldern soll den Wert
         # übernehmen und NICHT den Dialog schließen bzw. Buttons auslösen.
         for btn in (btn_ok, btn_cancel):
@@ -718,38 +723,55 @@ class ExportSettingsDialog(QDialog):
         a_bitrate = self.settings.get("audio_bitrate", "")
         scale_mode = presets.get_scale_mode(self.settings)
         keep_source_size = scale_mode == presets.SCALE_MODE_SOURCE
-        scale_note = " (verzerrt)" if scale_mode == presets.SCALE_MODE_STRETCH else ""
+        scale_note = str(tr(" (verzerrt)")) if scale_mode == presets.SCALE_MODE_STRETCH else ""
 
         rate_mode = "CBR" if self.settings.get("encoding_mode") == "cbr" else "VBR"
 
         # Video Summary String
         is_image = self._is_image_container()
         if is_image:
-            size_info = "Quelle beibehalten" if keep_source_size else f"{self.spin_width.value()}x{self.spin_height.value()}{scale_note}"
+            size_info = str(tr("Quelle beibehalten")) if keep_source_size else f"{self.spin_width.value()}x{self.spin_height.value()}{scale_note}"
             crop = presets.get_crop(self.settings)
             if crop:
-                size_info = f"Zuschnitt {crop['w']}x{crop['h']}, {size_info}"
+                size_info = str(tr(
+                    "Zuschnitt {width}x{height}, {size}",
+                    width=crop["w"], height=crop["h"], size=size_info,
+                ))
             quality = self.settings.get("image_quality", 90)
-            quality_info = "verlustfrei" if vcodec == "png" else f"Qualität {quality} %"
-            v_sum = f"Bild: {presets.format_label(self.settings)}, {size_info}, {quality_info}"
+            quality_info = str(tr("verlustfrei")) if vcodec == "png" else str(tr(
+                "Qualität {quality} %", quality=quality
+            ))
+            v_sum = str(tr(
+                "Bild: {format}, {size}, {quality}",
+                format=presets.format_label(self.settings), size=size_info,
+                quality=quality_info,
+            ))
         elif vcodec == "none":
-            v_sum = "Kein Videoexport"
+            v_sum = str(tr("Kein Videoexport"))
         elif vcodec == "copy":
-            v_sum = "Video: Kopieren (Stream Copy)"
+            v_sum = str(tr("Video: Kopieren (Stream Copy)"))
         elif keep_source_size:
             v_encoding = "CRF " + crf if crf else f"{rate_mode} {v_bitrate}"
-            v_sum = f"Video: {vcodec}, Quelle beibehalten, {v_encoding}"
+            v_sum = str(tr(
+                "Video: {codec}, Quelle beibehalten, {encoding}",
+                codec=vcodec, encoding=v_encoding,
+            ))
         else:
             v_encoding = "CRF " + crf if crf else f"{rate_mode} {v_bitrate}"
-            v_sum = f"Video: {vcodec}, {self.spin_width.value()}x{self.spin_height.value()}{scale_note} ({self.combo_fps.currentText()} fps), {v_encoding}"
+            v_sum = str(tr(
+                "Video: {codec}, {width}x{height}{scale_note} ({fps} fps), {encoding}",
+                codec=vcodec, width=self.spin_width.value(),
+                height=self.spin_height.value(), scale_note=scale_note,
+                fps=self.combo_fps.currentText(), encoding=v_encoding,
+            ))
             
         # Audio Summary String
         if acodec == "none":
-            a_sum = "Kein Audioexport"
+            a_sum = str(tr("Kein Audioexport"))
         elif acodec == "copy":
-            a_sum = "Audio: Kopieren (Stream Copy)"
+            a_sum = str(tr("Audio: Kopieren (Stream Copy)"))
         else:
-            a_sum = f"Audio: {acodec}, {a_bitrate}"
+            a_sum = str(tr("Audio: {codec}, {bitrate}", codec=acodec, bitrate=a_bitrate))
             
         # Echte Quell-Infozeilen aus ffprobe aufbauen (mit robusten Fallbacks)
         info = self.source_info or {}
@@ -773,24 +795,32 @@ class ExportSettingsDialog(QDialog):
                 except (TypeError, ValueError):
                     pass
             if info.get("a_channels"):
-                ch = {1: "Mono", 2: "Stereo"}.get(info["a_channels"], f"{info['a_channels']} ch")
+                ch = {1: str(tr("Mono")), 2: str(tr("Stereo"))}.get(
+                    info["a_channels"],
+                    str(tr("{count} Kanäle", count=info["a_channels"])),
+                )
                 a_line += f", {ch}"
             src_lines.append(a_line)
         if not src_lines:
-            src_lines.append("Keine Medieninformationen verfügbar")
+            src_lines.append(str(tr("Keine Medieninformationen verfügbar")))
         src_block = "<br>".join(src_lines)
 
-        summary_text = (
-            f"<b>Quelle:</b> {in_file}<br>"
-            f"{src_block}<br><br>"
-            f"<b>Ausgabe:</b> {os.path.basename(self.output_file)}<br>"
-            f"{v_sum}"
+        summary_text = tr(
+            "<b>Quelle:</b> {input}<br>{source_info}<br><br>"
+            "<b>Ausgabe:</b> {output}<br>{video}",
+            input=in_file, source_info=src_block,
+            output=os.path.basename(self.output_file), video=v_sum,
         )
         if not is_image:
-            summary_text += f"<br>{a_sum}"
+            summary_text = LocalizedString(
+                str(summary_text) + f"<br>{a_sum}", summary_text.source_text
+            )
             size_est = self._estimate_output_size()
             if size_est:
-                summary_text += f"<br><b>Geschätzte Größe:</b> {size_est}"
+                summary_text = tr(
+                    "{summary}<br><b>Geschätzte Größe:</b> {size}",
+                    summary=str(summary_text), size=size_est,
+                )
         self.summary_box.setText(summary_text)
         # Trim-Anzeige (Keyframe-Hinweis, Bereichsleiste) folgt der Codec-Wahl
         if hasattr(self, "lbl_trim_info"):
@@ -1449,7 +1479,8 @@ class ExportSettingsDialog(QDialog):
         """Wird ausgelöst, wenn der Benutzer auf den blauen Pfad klickt (exakt AME-Verhalten)."""
         ext = self.settings.get("container", "mp4")
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Ausgabedatei festlegen", self.output_file, f"Format (*.{ext});;Alle Dateien (*)"
+            self, "Ausgabedatei festlegen", self.output_file,
+            tr("Format (*.{ext});;Alle Dateien (*)", ext=ext),
         )
         if file_path:
             self.output_file = file_path
@@ -1931,17 +1962,24 @@ class ExportSettingsDialog(QDialog):
             return
         start = trim_start or 0.0
         end = trim_end if trim_end is not None else duration
-        parts = [
-            f"Schnitt: {self._format_timecode(start)} – "
-            f"{self._format_timecode(end) if end else 'Ende'}"
-        ]
+        text = tr(
+            "Schnitt: {start} – {end}",
+            start=self._format_timecode(start),
+            end=self._format_timecode(end) if end else str(tr("Ende")),
+        )
         if end and end > start:
-            parts.append(f"(Dauer {self._format_timecode(end - start)})")
+            text = tr(
+                "{trim} (Dauer {duration})",
+                trim=str(text), duration=self._format_timecode(end - start),
+            )
         # Stream-Kopie schneidet nur an Keyframes — dem User sagen, warum der
         # Clip ggf. etwas früher beginnt als eingegeben.
         if start > 0 and str(self.settings.get("video_codec", "")).strip().lower() == "copy":
-            parts.append("— verlustfrei: beginnt am Keyframe vor dem In-Punkt")
-        self.lbl_trim_info.setText(" ".join(parts))
+            text = tr(
+                "{trim} — verlustfrei: beginnt am Keyframe vor dem In-Punkt",
+                trim=str(text),
+            )
+        self.lbl_trim_info.setText(text)
 
     def done(self, result):
         """Räumt Vorschau-/Probe-Prozesse und Temp-Dateien beim Schließen auf."""
