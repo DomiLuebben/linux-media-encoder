@@ -1,64 +1,66 @@
 # Linux Media Encoder (LME)
 
-Ein professioneller GUI-Encoder für **FFmpeg** im Stil des Adobe Media Encoder –
-geschrieben in Python 3 mit PyQt6.
+**English** | [Deutsch](README.de.md)
+
+A professional **FFmpeg** GUI encoder inspired by Adobe Media Encoder, built
+with Python 3 and PyQt6.
 
 ![LME](linux-media-encoder.svg)
 
-## Funktionen
+## Features
 
-- Warteschlange (Queue) mit mehreren Jobs, Drag & Drop von Dateien
-- AME-artiger Export-Dialog mit echter Quell-Vorschau & Metadaten (via `ffprobe`)
-- Presets (MP4/H.264, HEVC, VP9, AV1, MKV, Match Source, Social/Delivery, MP3, FLAC, Stream-Copy)
-- Video: Auflösung, Framerate, Profil, **CRF / VBR / CBR**
-- Audio: AAC, MP3, Opus, FLAC, Copy; `Benutzerdefiniert` zeigt alle erkannten FFmpeg-Video-/Audio-Codecs plus Stream-Copy
-- Batch-Aktionen: aktuelle Video-/Audio-Einstellungen oder Ausgabeordner auf die ganze Warteschlange anwenden
-- Stream-Copy bleibt echte Stream-Copy: Video kann unverändert kopiert werden, während nur Audio neu encodiert wird
-- Intelligenter Bitraten-Rechner (lokales `claude`/`agy` Antigravity-CLI + Formel-Fallback)
-- KI-Untertitel: automatische SRT-Erzeugung aus Audio, optionale Übersetzung und Einbettung als Soft- oder Hard-Subtitles
-- Web-optimierte MP4/MOV (`+faststart`) und kompatibles `yuv420p` für H.264/H.265
-- Live-Fortschritt, Geschwindigkeit, Restzeit; Gesamtfortschritt der Queue in der Statusleiste; optionale FFmpeg-Konsole
-- **GPU-Encoding (NVENC)**: H.264/HEVC/AV1 als eigene Formate, sofern das installierte FFmpeg die Encoder kennt (CRF wird automatisch auf `-cq` gemappt)
-- **Trim/Schnitt**: In-/Out-Punkte auf der Timeline des Export-Dialogs (frame-genau, Untertitel bleiben synchron)
-- Zusätzliche Audio-Formate: WAV (PCM) und OGG (Opus)
-- Warteschlangen-Kontextmenü: einzelnen Job starten, duplizieren, umsortieren, Zieldatei im Dateimanager zeigen; Mehrfachauswahl beim Löschen
-- Fehlgeschlagene Jobs zeigen die letzten FFmpeg-Meldungen per Tooltip/Doppelklick
-- Warnung, bevor existierende Zieldateien überschrieben werden
-- Desktop-Benachrichtigung bei Queue-Ende; optional Ruhezustand/Herunterfahren nach Abschluss
-- Sitzung (Warteschlange, Fenster-Layout) wird beim Beenden gespeichert und wiederhergestellt
-- "Öffnen mit…"-Integration: per Dateimanager übergebene Dateien landen direkt in der Queue
-- Native Fensterdekorationen des Desktops mit klassischer App-Menüleiste
-- Breeze-Dark-Theme im AME-Stil oder natives System-Theme (Auswahl wird gemerkt)
+- Multi-job queue with drag-and-drop file support
+- AME-style export dialog with source preview and metadata from `ffprobe`
+- Presets for MP4/H.264, HEVC, VP9, AV1, MKV, Match Source, Social/Delivery, MP3, FLAC, and stream copy
+- Video controls for resolution, frame rate, profile, and **CRF / VBR / CBR**
+- Audio support for AAC, MP3, Opus, FLAC, and copy; Custom mode exposes all detected FFmpeg video and audio codecs
+- Batch actions for applying video/audio settings or output folders to the entire queue
+- True stream copy: copy video unchanged while re-encoding only the audio track
+- Intelligent bitrate calculator using a local `claude`/`agy` Antigravity CLI with a formula-based fallback
+- AI subtitles: generate SRT files from audio, optionally translate them, and embed them as soft or hard subtitles
+- Web-optimized MP4/MOV output with `+faststart` and compatible `yuv420p` output for H.264/H.265
+- Live progress, speed, remaining time, overall queue progress, and an optional FFmpeg console
+- **GPU encoding (NVENC)** for H.264, HEVC, and AV1 when supported by the installed FFmpeg build; CRF is mapped to `-cq`
+- **Precise trimming** with timeline in/out points while keeping subtitles synchronized
+- Additional WAV (PCM) and OGG (Opus) audio formats
+- Queue context menu for starting, duplicating, reordering, and locating individual jobs, plus multi-selection deletion
+- Failed jobs expose the latest FFmpeg messages through tooltips and double-click details
+- Warning before overwriting existing output files
+- Desktop notification when the queue finishes, with optional suspend or shutdown
+- Persistent queue, window layout, and session state
+- “Open with…” integration that adds files passed by a file manager directly to the queue
+- Native desktop window decorations with a classic application menu bar
+- AME-style Breeze Dark theme or the native system theme, with persistent selection
 
-## Voraussetzungen
+## Requirements
 
-- `python` (3.11+)
-- `python-pyqt6`
-- `ffmpeg` (inkl. `ffprobe`) im `PATH`
+- Python 3.11 or newer
+- PyQt6 (`python-pyqt6` on Arch Linux)
+- FFmpeg, including `ffprobe`, available in `PATH`
 
-## Direkt starten (ohne Installation)
+## Run Without Installing
 
-```sh
+```bash
 python main.py
 ```
 
-## Als Arch-Paket bauen & installieren
+## Build and Install as an Arch Package
 
-Im entpackten Ordner:
+From the project directory:
 
-```sh
+```bash
 makepkg -si
 ```
 
-Danach erscheint **Linux Media Encoder** im Anwendungsmenü und ist über den
-Befehl `linux-media-encoder` startbar.
+**Linux Media Encoder** will then appear in the application menu and can be
+started with the `linux-media-encoder` command.
 
-Paket entfernen:
+To remove the package:
 
-```sh
+```bash
 sudo pacman -R linux-media-encoder
 ```
 
-## Lizenz
+## License
 
 MIT
