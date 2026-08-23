@@ -949,7 +949,7 @@ class DiscRipperDialog(QDialog):
                     "Für die Installation wird pkexec (polkit) benötigt, es ist auf diesem "
                     "System nicht vorhanden. Bitte den folgenden Befehl im Terminal ausführen:"
                     "\n\n{command}",
-                    command=" ".join(plan.command[1:]),
+                    command=dependency_installer.command_for_display(plan.command[1:]),
                 ),
             )
             return
@@ -960,8 +960,13 @@ class DiscRipperDialog(QDialog):
             "einem eigenen Fenster.",
             distro=plan.distro_name or "-",
             packages="  " + "\n  ".join(plan.packages),
-            command=" ".join(plan.command),
+            command=dependency_installer.command_for_display(plan.command),
         )
+        if plan.info_notes:
+            details += "\n\n" + tr("Bitte beachten:") + "\n- " + "\n- ".join(
+                tr(note) for note in plan.info_notes
+            )
+
         notes = [tr(note) for note in plan.manual_notes]
         if plan.unresolved:
             notes.append(tr(
@@ -987,7 +992,8 @@ class DiscRipperDialog(QDialog):
             return
 
         self.btn_install_deps.setEnabled(False)
-        self.txt_log.append(tr("Starte Installation: {command}", command=" ".join(plan.command)))
+        self.txt_log.append(tr("Starte Installation: {command}",
+                                command=dependency_installer.command_for_display(plan.command)))
         self.lbl_status.setText(tr("Installiere fehlende Komponenten..."))
 
         self._install_process = QProcess(self)

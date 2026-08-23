@@ -18,6 +18,7 @@ liegt unter Arch zum Beispiel nur im AUR.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -180,10 +181,6 @@ _MANUAL_NOTES: Dict[Tuple[DistroFamily, str], str] = {
     (DistroFamily.ARCH, "libbdplus"):
         "libbdplus liegt bei Arch und seinen Ablegern nur im AUR. LME baut keine "
         "AUR-Pakete; bitte mit einem AUR-Helfer nachinstallieren.",
-    (DistroFamily.DEBIAN, "libdvdcss"):
-        "Debian und Ubuntu liefern libdvdcss nicht als fertiges Paket aus. Nach der "
-        "Installation von libdvd-pkg ist einmalig 'sudo dpkg-reconfigure libdvd-pkg' "
-        "nötig; das lädt und baut die Bibliothek.",
     (DistroFamily.FEDORA, "libdvdcss"):
         "Unter Fedora liegt libdvdcss im RPM-Fusion-Repository. LME schaltet keine "
         "Fremdquellen eigenmächtig frei — bitte RPM Fusion (free) zuerst einrichten.",
@@ -200,6 +197,8 @@ class InstallPlan:
     command: List[str] = field(default_factory=list)
     # Feste deutsche Quelltexte — die Oberfläche schickt sie durch tr().
     manual_notes: List[str] = field(default_factory=list)
+    # Wird erledigt, ist aber erwähnenswert (Dauer, Netzzugriff …).
+    info_notes: List[str] = field(default_factory=list)
     # Komponenten, für die kein Paket auffindbar war (Namen, nicht übersetzbar).
     unresolved: List[str] = field(default_factory=list)
     needs_reboot: bool = False
@@ -238,15 +237,53 @@ def package_exists(family: DistroFamily, package: str, runner: Callable = _run) 
     return False
 
 
+# libdvd-pkg lädt und übersetzt libdvdcss erst nach der Paketinstallation. Die
+# Rückfrage danach ist eine debconf-Frage, kein Kennwort — sie lässt sich also
+# vorab beantworten, sodass der Anwender nur die eine pkexec-Abfrage sieht.
+DEBCONF_PRESEED_LINES = (
+    "libdvd-pkg libdvd-pkg/build boolean true",
+    "libdvd-pkg libdvd-pkg/post-invoke_hook-install boolean true",
+)
+
+
+def build_debian_libdvd_script(packages: Sequence[str]) -> str:
+    """Baut die Shell-Folge für Debian-Systeme mit libdvd-pkg.
+
+    Alles in einem einzigen privilegierten Aufruf, damit die Kennwortabfrage
+    genau einmal erscheint. Jeder eingesetzte Wert wird zitiert; die Vorlage
+    selbst ist fest und stammt nicht aus einer Eingabe.
+    """
+    quoted = " ".join(shlex.quote(name) for name in packages)
+    preseed = "\n".join(DEBCONF_PRESEED_LINES)
+    return (
+        "set -e\n"
+        "export DEBIAN_FRONTEND=noninteractive\n"
+        f"apt-get install -y {quoted}\n"
+        # Schlägt das Vorbeantworten fehl (unbekannte Vorlage in einer anderen
+        # Paketfassung), greift unten trotzdem die Vorgabe.
+        f"printf '%s\\n' {shlex.quote(preseed)} | debconf-set-selections || true\n"
+        "dpkg-reconfigure -f noninteractive libdvd-pkg\n"
+    )
+
+
 def build_install_command(
     family: DistroFamily,
     packages: Sequence[str],
     is_immutable: bool = False,
     use_pkexec: bool = True,
 ) -> List[str]:
-    """Baut den Installationsbefehl als Argumentliste (nie als Shell-Zeile)."""
+    """Baut den Installationsbefehl als Argumentliste (nie als Shell-Zeile).
+
+    Ausnahme ist der Debian-Weg mit libdvd-pkg: dort müssen mehrere Schritte
+    unter denselben Rechten laufen, sonst fragt pkexec zweimal nach dem
+    Kennwort. Siehe build_debian_libdvd_script().
+    """
     if not packages:
         return []
+
+    if family == DistroFamily.DEBIAN and "libdvd-pkg" in packages:
+        cmd = ["sh", "-c", build_debian_libdvd_script(packages)]
+        return (["pkexec"] + cmd) if use_pkexec else cmd
 
     if family == DistroFamily.ARCH:
         base = ["pacman", "-S", "--needed", "--noconfirm"]
@@ -312,10 +349,37 @@ def plan_installation(
         if resolved not in chosen:
             chosen.append(resolved)
 
+    # Debian: libdvd-pkg braucht Übersetzungswerkzeug. Nur mitnehmen, wenn es
+    # der Paketverwalter auch kennt.
+    if info.family == DistroFamily.DEBIAN and "libdvd-pkg" in chosen:
+        for helper in ("dh-autoreconf", "build-essential"):
+            if helper not in chosen and package_exists(info.family, helper, runner):
+                chosen.append(helper)
+        plan.info_notes.append(
+            "libdvdcss wird bei Debian und Ubuntu über libdvd-pkg aus dem Quelltext gebaut. "
+            "Das geschieht im selben Arbeitsgang, braucht eine Internetverbindung und kann "
+            "einige Minuten dauern; der Fortschritt steht im Protokoll."
+        )
+
     plan.packages = chosen
     plan.command = build_install_command(info.family, chosen, info.is_immutable)
     plan.needs_reboot = bool(chosen) and info.is_immutable
     return plan
+
+
+def command_for_display(command: Sequence[str]) -> str:
+    """Lesbare Fassung des Befehls für die Bestätigung.
+
+    Bei der Shell-Folge für Debian wäre eine einzige Zeile unlesbar — dort wird
+    das Skript selbst gezeigt, damit vor dem Klick sichtbar ist, was läuft.
+    """
+    parts = list(command)
+    if not parts:
+        return ""
+    if len(parts) >= 2 and parts[-2] == "-c":
+        prefix = " ".join(parts[:-1])
+        return f"{prefix}\n\n{parts[-1].strip()}"
+    return " ".join(parts)
 
 
 def graphical_sudo_available() -> bool:

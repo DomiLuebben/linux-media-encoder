@@ -39,7 +39,11 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 > Pop!_OS, Bazzite ou Nobara) et l’authentification passe par `pkexec`. La commande complète est
 > affichée avant exécution. Les paquets introuvables sur le système sont ignorés et signalés
 > individuellement plutôt que de faire échouer toute l’opération. LME n’active pas de sources
-> tierces (RPM Fusion, AUR) de lui-même.
+> tierces (RPM Fusion, AUR) de lui-même. Sur Debian, Ubuntu et Mint, libdvdcss est compilé
+> depuis les sources via `libdvd-pkg` ; l’étape debconf nécessaire est pré-répondue et s’exécute
+> dans le même appel privilégié, de sorte que la demande de mot de passe n’apparaît qu’une fois.
+> Cela nécessite une connexion Internet et prend quelques minutes ; la progression s’affiche dans
+> le journal.
 
 > **Blu-ray protégés :** LME ne fournit aucune clé de déchiffrement et n’en télécharge aucune. Les
 > disques non chiffrés et les dossiers BDMV fonctionnent tels quels. Pour les disques protégés par

@@ -13,7 +13,9 @@ from dependency_installer import (
     DistroFamily,
     DistroInfo,
     InstallPlan,
+    build_debian_libdvd_script,
     build_install_command,
+    command_for_display,
     detect_distro,
     family_from_os_release,
     package_exists,
@@ -203,11 +205,66 @@ class InstallPlanTest(unittest.TestCase):
         self.assertTrue(plan.needs_reboot)
         self.assertIn("rpm-ostree", plan.command)
 
-    def test_debian_libdvdcss_always_carries_the_manual_step(self):
-        info = DistroInfo(family=DistroFamily.DEBIAN, pretty_name="Linux Mint")
+    def test_debian_prefers_ready_made_libdvdcss2_when_available(self):
+        # Gibt es ein fertiges Paket (z. B. aus deb-multimedia), entfaellt der
+        # ganze Bauweg ueber libdvd-pkg.
+        info = DistroInfo(family=DistroFamily.DEBIAN, pretty_name="Debian")
         plan = plan_installation(["libdvdcss"], info, lambda cmd, timeout=60: (0, "  Candidate: 1.4\n"))
-        self.assertTrue(plan.packages)
-        self.assertTrue(any("dpkg-reconfigure" in note for note in plan.manual_notes))
+        self.assertEqual(plan.packages, ["libdvdcss2"])
+        self.assertEqual(plan.command[:2], ["pkexec", "apt-get"])
+        self.assertEqual(plan.info_notes, [])
+
+    def test_debian_libdvd_pkg_runs_the_build_step_in_the_same_call(self):
+        # Ohne fertiges libdvdcss2 faellt die Wahl auf libdvd-pkg. Der
+        # anschliessende debconf-Schritt muss im SELBEN privilegierten Aufruf
+        # laufen, sonst fragt pkexec ein zweites Mal nach dem Kennwort.
+        def runner(cmd, timeout=60):
+            if cmd[-1] == "libdvdcss2":
+                return 0, "  Candidate: (none)\n"
+            return 0, "  Candidate: 1.4\n"
+
+        info = DistroInfo(family=DistroFamily.DEBIAN, pretty_name="Linux Mint")
+        plan = plan_installation(["libdvdcss"], info, runner)
+
+        self.assertIn("libdvd-pkg", plan.packages)
+        self.assertIn("dh-autoreconf", plan.packages)
+        self.assertEqual(plan.command[:3], ["pkexec", "sh", "-c"])
+
+        script = plan.command[3]
+        self.assertIn("DEBIAN_FRONTEND=noninteractive", script)
+        self.assertIn("debconf-set-selections", script)
+        self.assertIn("libdvd-pkg/build boolean true", script)
+        self.assertIn("dpkg-reconfigure -f noninteractive libdvd-pkg", script)
+        # Genau ein privilegierter Aufruf.
+        self.assertEqual(plan.command.count("pkexec"), 1)
+        # Der Bauschritt wird angekuendigt, nicht verschwiegen.
+        self.assertTrue(any("libdvd-pkg" in note for note in plan.info_notes))
+        self.assertEqual(plan.manual_notes, [])
+
+    def test_generated_debian_script_is_valid_shell(self):
+        import shutil
+        import subprocess
+
+        script = build_debian_libdvd_script(["cdparanoia", "libdvd-pkg"])
+        sh = shutil.which("sh")
+        self.assertIsNotNone(sh)
+        # 'sh -n' prueft nur die Syntax und fuehrt nichts aus.
+        res = subprocess.run([sh, "-n"], input=script, text=True, capture_output=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_package_names_are_quoted_in_the_script(self):
+        script = build_debian_libdvd_script(["libdvd-pkg", "boeser name; rm -rf /"])
+        self.assertIn("'boeser name; rm -rf /'", script)
+
+    def test_command_for_display_unfolds_shell_scripts(self):
+        plain = ["pkexec", "pacman", "-S", "lsdvd"]
+        self.assertEqual(command_for_display(plain), "pkexec pacman -S lsdvd")
+
+        shell = ["pkexec", "sh", "-c", "set -e\napt-get install -y lsdvd\n"]
+        shown = command_for_display(shell)
+        self.assertTrue(shown.startswith("pkexec sh -c"))
+        self.assertIn("apt-get install -y lsdvd", shown)
+        self.assertEqual(command_for_display([]), "")
 
 
 if __name__ == "__main__":

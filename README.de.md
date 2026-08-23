@@ -48,7 +48,10 @@ geschrieben in Python 3 mit PyQt6.
 > Kennwortabfrage läuft grafisch über `pkexec`. Vor dem Ausführen wird der vollständige Befehl
 > angezeigt. Pakete, die auf dem System nicht auffindbar sind, werden übersprungen und einzeln
 > benannt, statt den ganzen Lauf scheitern zu lassen. Fremdquellen (RPM Fusion, AUR) schaltet
-> LME nicht eigenmächtig frei.
+> LME nicht eigenmächtig frei. Unter Debian, Ubuntu und Mint wird libdvdcss über `libdvd-pkg`
+> aus dem Quelltext gebaut; der dafür nötige debconf-Schritt läuft vorbeantwortet im selben
+> privilegierten Aufruf, sodass die Kennwortabfrage nur einmal erscheint. Das braucht eine
+> Internetverbindung und dauert einige Minuten; der Fortschritt steht im Protokoll.
 
 > **Kopiergeschützte Blu-rays:** LME bringt keine Entschlüsselungsschlüssel mit und lädt auch keine
 > herunter. Unverschlüsselte Discs und BDMV-Ordner funktionieren ohne Zusatz. Für AACS-geschützte

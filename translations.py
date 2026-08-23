@@ -379,6 +379,8 @@ EN_US = {
     "Der dvdvideo-Demuxer ist eine Übersetzungsoption von FFmpeg (--enable-libdvdnav --enable-libdvdread) und lässt sich nicht nachinstallieren. Nötig ist ein FFmpeg-Paket, das damit gebaut wurde.": "The dvdvideo demuxer is an FFmpeg build option (--enable-libdvdnav --enable-libdvdread) and cannot be installed afterwards. An FFmpeg package built with it is required.",
     "Das bluray-Protokoll ist eine Übersetzungsoption von FFmpeg (--enable-libbluray) und lässt sich nicht nachinstallieren. Nötig ist ein FFmpeg-Paket, das damit gebaut wurde.": "The bluray protocol is an FFmpeg build option (--enable-libbluray) and cannot be installed afterwards. An FFmpeg package built with it is required.",
     "Die Distribution konnte nicht zugeordnet werden. Bitte die fehlenden Komponenten über den Paketverwalter des Systems nachinstallieren.": "The distribution could not be identified. Please install the missing components using your system's package manager.",
+    "Bitte beachten:": "Please note:",
+    "libdvdcss wird bei Debian und Ubuntu über libdvd-pkg aus dem Quelltext gebaut. Das geschieht im selben Arbeitsgang, braucht eine Internetverbindung und kann einige Minuten dauern; der Fortschritt steht im Protokoll.": "On Debian and Ubuntu, libdvdcss is built from source via libdvd-pkg. This happens in the same run, requires an internet connection and can take a few minutes; progress is shown in the log.",
 }
 
 
@@ -672,6 +674,8 @@ FR_FR = {
     "Der dvdvideo-Demuxer ist eine Übersetzungsoption von FFmpeg (--enable-libdvdnav --enable-libdvdread) und lässt sich nicht nachinstallieren. Nötig ist ein FFmpeg-Paket, das damit gebaut wurde.": "Le démultiplexeur dvdvideo est une option de compilation de FFmpeg (--enable-libdvdnav --enable-libdvdread) et ne peut pas être installé après coup. Un paquet FFmpeg compilé avec cette option est nécessaire.",
     "Das bluray-Protokoll ist eine Übersetzungsoption von FFmpeg (--enable-libbluray) und lässt sich nicht nachinstallieren. Nötig ist ein FFmpeg-Paket, das damit gebaut wurde.": "Le protocole bluray est une option de compilation de FFmpeg (--enable-libbluray) et ne peut pas être installé après coup. Un paquet FFmpeg compilé avec cette option est nécessaire.",
     "Die Distribution konnte nicht zugeordnet werden. Bitte die fehlenden Komponenten über den Paketverwalter des Systems nachinstallieren.": "La distribution n’a pas pu être identifiée. Veuillez installer les composants manquants via le gestionnaire de paquets du système.",
+    "Bitte beachten:": "À noter :",
+    "libdvdcss wird bei Debian und Ubuntu über libdvd-pkg aus dem Quelltext gebaut. Das geschieht im selben Arbeitsgang, braucht eine Internetverbindung und kann einige Minuten dauern; der Fortschritt steht im Protokoll.": "Sur Debian et Ubuntu, libdvdcss est compilé depuis les sources via libdvd-pkg. Cela se fait dans la même opération, nécessite une connexion Internet et peut prendre quelques minutes ; la progression s’affiche dans le journal.",
 }
 
 

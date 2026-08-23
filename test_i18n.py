@@ -116,6 +116,12 @@ class LocalizedWidgetTest(unittest.TestCase):
             command=["pkexec", "pacman", "-S", "--needed", "--noconfirm", "lsdvd", "libaacs"],
             manual_notes=list(dependency_installer._MANUAL_NOTES.values())
             + list(dependency_installer._FFMPEG_BUILD_OPTIONS.values()),
+            info_notes=[
+                "libdvdcss wird bei Debian und Ubuntu über libdvd-pkg aus dem Quelltext "
+                "gebaut. Das geschieht im selben Arbeitsgang, braucht eine "
+                "Internetverbindung und kann einige Minuten dauern; der Fortschritt "
+                "steht im Protokoll."
+            ],
             unresolved=["libbdplus"],
             needs_reboot=True,
         )
