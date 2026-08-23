@@ -1065,9 +1065,14 @@ def get_ffmpeg_args(input_file, output_file, settings):
     if input_args and isinstance(input_args, list):
         args.extend(str(a) for a in input_args)
 
+    # Fehlertoleranz vor -i (beschädigte Quelldateien oder Disc-Streams nicht abbrechen)
+    if settings.get("ignore_errors", False) or (settings.get("disc_type") and settings.get("ignore_errors") is not False):
+        args.extend(["-err_detect", "ignore_err", "-fflags", "+discardcorrupt+genpts"])
+
     actual_input = input_file
     if settings.get("disc_type") == "bluray" and not str(input_file).startswith("bluray:"):
         actual_input = f"bluray:{input_file}"
+
 
     if is_copy_cut:
         if trim_start is not None and trim_start > 0:

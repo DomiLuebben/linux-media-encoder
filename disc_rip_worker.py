@@ -203,12 +203,14 @@ class IsoDumpWorker(QObject):
         device_path: str,
         output_iso_path: str,
         total_size_bytes: int = 0,
+        ignore_errors: bool = True,
         parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
         self.device_path = device_path
         self.output_iso_path = output_iso_path
         self.total_size_bytes = total_size_bytes
+        self.ignore_errors = ignore_errors
         self.process: Optional[QProcess] = None
         self._is_cancelled = False
 
@@ -226,9 +228,16 @@ class IsoDumpWorker(QObject):
         if self.total_size_bytes > 0:
             block_count = self.total_size_bytes // 2048
 
-        cmd = build_iso_dump_command(self.device_path, self._tmp_iso_path, block_count=block_count)
+        conv_options = "noerror,sync" if self.ignore_errors else ""
+        cmd = build_iso_dump_command(
+            self.device_path,
+            self._tmp_iso_path,
+            block_count=block_count,
+            conv_options=conv_options,
+        )
         self.status_changed.emit("Erstelle 1:1 ISO-Abbild...")
         self.log_received.emit(f"Führe aus: {' '.join(cmd)}")
+
 
         self.process = QProcess(self)
         self.process.readyReadStandardError.connect(self._handle_stderr)

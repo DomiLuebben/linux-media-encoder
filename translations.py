@@ -406,7 +406,13 @@ EN_US = {
     "Stufe 2/2 · Konvertiert": "Step 2/2 · Converting",
     "Erst komplett auslesen, dann konvertieren (zweistufig)": "Read the disc completely first, then convert (two-stage)",
     "Aus: die Disc wird direkt konvertiert — meist schneller und ohne Platzbedarf.\nAn: die Disc wird zuerst verlustfrei zwischengespeichert. Das lohnt sich, wenn die Umwandlung langsamer ist als das Laufwerk (starke Codecs wie HEVC/AV1, schwacher Rechner), wenn aus demselben Titel mehrere Fassungen entstehen sollen oder wenn die Disc zerkratzt ist — ein Lesefehler kostet dann nur das Auslesen.": "Off: the disc is converted directly — usually faster and needs no disk space.\nOn: the disc is staged losslessly first. This pays off when conversion is slower than the drive (demanding codecs such as HEVC/AV1, a weak machine), when several versions are to be made from the same title, or when the disc is scratched — a read error then only costs the read pass.",
+    "Fehlertoleranz aktivieren (beschädigte Sektoren & Streamfehler ignorieren)": "Enable error tolerance (ignore bad sectors & stream errors)",
+    "Aktiviert erweiterte Fehlertoleranz für FFmpeg (-err_detect ignore_err, -fflags +discardcorrupt+genpts) sowie conv=noerror,sync beim ISO-Abbild. Verhindert Abbrüche bei Lesefehlern oder zerkratzten Datenträgern.": "Enables advanced error tolerance for FFmpeg (-err_detect ignore_err, -fflags +discardcorrupt+genpts) and conv=noerror,sync for ISO dump. Prevents aborts on read errors or scratched media.",
+    "Fehlertoleranz (Stream- und Dekodierfehler ignorieren)": "Error tolerance (ignore stream and decoding errors)",
+    "Fügt FFmpeg-Flags (-err_detect ignore_err, -fflags +discardcorrupt+genpts) hinzu, um bei beschädigten Quelldateien oder Streams nicht abzubrechen.": "Adds FFmpeg flags (-err_detect ignore_err, -fflags +discardcorrupt+genpts) to prevent aborting on damaged source files or streams.",
+    "Fehlertoleranz": "Error tolerance",
 }
+
 
 
 FR_FR = {
@@ -958,4 +964,10 @@ FR_FR.update({
     "MP3 (320 kbps)": "MP3 (320 kbps)",
     "AAC (256 kbps)": "AAC (256 kbps)",
     "Opus (160 kbps)": "Opus (160 kbps)",
+    "Fehlertoleranz aktivieren (beschädigte Sektoren & Streamfehler ignorieren)": "Activer la tolérance aux erreurs (ignorer secteurs défectueux et erreurs de flux)",
+    "Aktiviert erweiterte Fehlertoleranz für FFmpeg (-err_detect ignore_err, -fflags +discardcorrupt+genpts) sowie conv=noerror,sync beim ISO-Abbild. Verhindert Abbrüche bei Lesefehlern oder zerkratzten Datenträgern.": "Active la tolérance aux erreurs avancée pour FFmpeg (-err_detect ignore_err, -fflags +discardcorrupt+genpts) et conv=noerror,sync pour l’image ISO. Évite les interruptions lors d’erreurs de lecture ou de disques rayés.",
+    "Fehlertoleranz (Stream- und Dekodierfehler ignorieren)": "Tolérance aux erreurs (ignorer les erreurs de flux et de décodage)",
+    "Fügt FFmpeg-Flags (-err_detect ignore_err, -fflags +discardcorrupt+genpts) hinzu, um bei beschädigten Quelldateien oder Streams nicht abzubrechen.": "Ajoute les options FFmpeg (-err_detect ignore_err, -fflags +discardcorrupt+genpts) pour éviter les interruptions sur fichiers sources ou flux corrompus.",
+    "Fehlertoleranz": "Tolérance aux erreurs",
 })
+

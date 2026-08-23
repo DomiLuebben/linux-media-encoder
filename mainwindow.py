@@ -489,10 +489,20 @@ class MainWindow(QMainWindow):
         self.btn_intelligent_mode = QPushButton("Intelligenter Modus...")
         self.btn_intelligent_mode.clicked.connect(self._on_intelligent_mode_clicked)
         v_grid.addWidget(self.btn_intelligent_mode, 8, 0, 1, 2)
+
+        # Fehlertoleranz Checkbox
+        self.chk_ignore_errors = QCheckBox("Fehlertoleranz (Stream- und Dekodierfehler ignorieren)")
+        self.chk_ignore_errors.setToolTip(
+            "Fügt FFmpeg-Flags (-err_detect ignore_err, -fflags +discardcorrupt+genpts) hinzu, "
+            "um bei beschädigten Quelldateien oder Streams nicht abzubrechen."
+        )
+        self.chk_ignore_errors.stateChanged.connect(self._save_ui_settings_to_job)
+        v_grid.addWidget(self.chk_ignore_errors, 9, 0, 1, 2)
         
         v_tab_layout.addLayout(v_grid)
         v_tab_layout.addStretch()
         self.settings_tabs.addTab(video_tab, "Video")
+
         
         # --- AUDIO TAB ---
         audio_tab = QWidget()
@@ -1156,8 +1166,10 @@ class MainWindow(QMainWindow):
         self.edit_sub_source_custom.blockSignals(block)
         self.edit_sub_translate_custom.blockSignals(block)
         self.edit_sub_file_path.blockSignals(block)
+        self.chk_ignore_errors.blockSignals(block)
 
     def _is_custom_mode(self, settings=None):
+
         """True, wenn die aktuelle Auswahl alle Codec-Optionen anzeigen soll."""
         return (
             self.combo_preset.currentText() == "Benutzerdefiniert"
@@ -1396,7 +1408,9 @@ class MainWindow(QMainWindow):
         self.chk_subtitles.setChecked(bool(settings.get("subtitles_enabled", False)))
         self.edit_sub_file_path.setText(settings.get("subtitles_file_path", ""))
         self.combo_sub_mode.setCurrentText(settings.get("subtitles_mode", "Soft-Untertitel (in Container einbetten)"))
+        self.chk_ignore_errors.setChecked(bool(settings.get("ignore_errors", False)))
         # Sichtbarkeit der "Andere..."-Felder direkt setzen — die Handler würden
+
         # mitten im Laden speichern und den Fokus stehlen.
         self.edit_sub_source_custom.setVisible(self.combo_sub_source.currentText() == "Andere...")
         self.edit_sub_translate_custom.setVisible(self.combo_sub_translate.currentText() == "Andere...")
@@ -1632,8 +1646,10 @@ class MainWindow(QMainWindow):
         settings["subtitles_enabled"] = self.chk_subtitles.isChecked()
         settings["subtitles_file_path"] = self.edit_sub_file_path.text()
         settings["subtitles_mode"] = self.combo_sub_mode.currentText()
+        settings["ignore_errors"] = self.chk_ignore_errors.isChecked()
         
         # Ausgabename nur bei Containerwechsel anpassen. Audio-/Codec-Aenderungen
+
         # duerfen keinen manuell gesetzten Ausgabeordner oder Dateinamen ueberschreiben.
         new_ext = settings["container"]
         current_ext = os.path.splitext(job["output_file"])[1].lstrip(".").lower()

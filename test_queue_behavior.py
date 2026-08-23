@@ -223,4 +223,21 @@ class DiscTwoStageQueueTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_ignore_errors_setting_flow_in_ui(self):
+        from mainwindow import MainWindow
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.mp4"))
+            self.app.processEvents()
+            job = window.jobs[0]
+            # UI Checkbox umschalten
+            window.chk_ignore_errors.setChecked(True)
+            self.assertTrue(job["settings"].get("ignore_errors"))
+            
+            window.chk_ignore_errors.setChecked(False)
+            self.assertFalse(job["settings"].get("ignore_errors"))
+        finally:
+            window.close()
+
+
 

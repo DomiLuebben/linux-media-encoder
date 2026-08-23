@@ -529,7 +529,7 @@ class OpticalMediaCoreTest(unittest.TestCase):
         self.assertEqual(args_remux[args_remux.index("-c:a") + 1], "copy")
 
     def test_build_bluray_rip_args(self):
-        # 1. Blu-ray Remuxing
+        # 1. Blu-ray Remuxing mit Fehlertoleranz
         args, out = build_bluray_rip_args(
             source_path="/media/bluray",
             playlist_num=800,
@@ -537,7 +537,12 @@ class OpticalMediaCoreTest(unittest.TestCase):
             subtitle_stream_idx=1,
             output_file="/tmp/bluray.mp4",
             remux_mkv=True,
+            ignore_errors=True,
         )
+        self.assertIn("-err_detect", args)
+        self.assertEqual(args[args.index("-err_detect") + 1], "ignore_err")
+        self.assertIn("-fflags", args)
+        self.assertEqual(args[args.index("-fflags") + 1], "+discardcorrupt+genpts")
         self.assertIn("-playlist", args)
         self.assertEqual(args[args.index("-playlist") + 1], "800")
         self.assertIn("-i", args)
@@ -547,6 +552,16 @@ class OpticalMediaCoreTest(unittest.TestCase):
         self.assertTrue(out.endswith(".mkv"))
         self.assertIn("-c:v", args)
         self.assertEqual(args[args.index("-c:v") + 1], "copy")
+
+        # 2. Ohne Fehlertoleranz
+        args_strict, _ = build_bluray_rip_args(
+            source_path="/media/bluray",
+            playlist_num=1,
+            output_file="/tmp/test.mkv",
+            ignore_errors=False,
+        )
+        self.assertNotIn("-err_detect", args_strict)
+        self.assertNotIn("-fflags", args_strict)
 
     def test_build_audio_cd_and_encode_commands(self):
         # cdparanoia
@@ -573,7 +588,10 @@ class OpticalMediaCoreTest(unittest.TestCase):
 
     def test_build_iso_dump_command(self):
         cmd = build_iso_dump_command("/dev/sr0", "/tmp/backup.iso", block_count=123456)
-        self.assertEqual(cmd, ["dd", "if=/dev/sr0", "of=/tmp/backup.iso", "bs=2048", "status=progress", "count=123456"])
+        self.assertEqual(cmd, ["dd", "if=/dev/sr0", "of=/tmp/backup.iso", "bs=2048", "conv=noerror,sync", "status=progress", "count=123456"])
+
+        cmd_strict = build_iso_dump_command("/dev/sr0", "/tmp/backup.iso", block_count=123456, conv_options="")
+        self.assertEqual(cmd_strict, ["dd", "if=/dev/sr0", "of=/tmp/backup.iso", "bs=2048", "status=progress", "count=123456"])
 
     def test_encryption_and_capabilities_check(self):
         has_dvdcss, msg_dvd = check_dvd_encryption_support()
@@ -582,6 +600,7 @@ class OpticalMediaCoreTest(unittest.TestCase):
         caps = check_ffmpeg_optical_capabilities()
         self.assertTrue(caps.get("dvdvideo", False))
         self.assertTrue(caps.get("bluray", False))
+
 
 
 class DiscRipperDialogAndWorkerTest(unittest.TestCase):

@@ -394,10 +394,19 @@ class ExportSettingsDialog(QDialog):
         self.btn_intelligent_mode = QPushButton("Intelligenter Modus...")
         self.btn_intelligent_mode.clicked.connect(self._on_intelligent_mode_clicked)
         v_grid.addWidget(self.btn_intelligent_mode, 8, 0, 1, 2)
+
+        # Fehlertoleranz Checkbox
+        self.chk_ignore_errors = QCheckBox("Fehlertoleranz (Stream- und Dekodierfehler ignorieren)")
+        self.chk_ignore_errors.setToolTip(
+            "Fügt FFmpeg-Flags (-err_detect ignore_err, -fflags +discardcorrupt+genpts) hinzu, "
+            "um bei beschädigten Quelldateien oder Streams nicht abzubrechen."
+        )
+        v_grid.addWidget(self.chk_ignore_errors, 9, 0, 1, 2)
         
         v_tab_layout.addLayout(v_grid)
         v_tab_layout.addStretch()
         self.settings_tabs.addTab(video_tab, "Video")
+
         
         # --- AUDIO TAB ---
         audio_tab = QWidget()
@@ -614,11 +623,15 @@ class ExportSettingsDialog(QDialog):
             fps_setting = str(self.settings.get("fps", "") or "").strip()
             self.combo_fps.setCurrentText(fps_setting if fps_setting else presets.FPS_SOURCE_LABEL)
             self.combo_profile.setCurrentText(str(self.settings.get("profile", "High")))
+            self.chk_ignore_errors.blockSignals(True)
+            self.chk_ignore_errors.setChecked(bool(self.settings.get("ignore_errors", False)))
+            self.chk_ignore_errors.blockSignals(False)
             self.combo_scale_mode.blockSignals(False)
             self.spin_width.blockSignals(False)
             self.spin_height.blockSignals(False)
             self.combo_fps.blockSignals(False)
             self.combo_profile.blockSignals(False)
+
 
             self.combo_preset.blockSignals(True)
             if custom_mode:
@@ -1551,8 +1564,10 @@ class ExportSettingsDialog(QDialog):
         self.settings["subtitles_enabled"] = self.chk_subtitles.isChecked()
         self.settings["subtitles_file_path"] = self.edit_sub_file_path.text()
         self.settings["subtitles_mode"] = self.combo_sub_mode.currentText()
+        self.settings["ignore_errors"] = self.chk_ignore_errors.isChecked()
         
         return self.output_file, self.settings
+
 
     def _on_vcodec_changed(self, text):
         """Reagiert auf manuelle Eingabe des Video-Codecs (z. B. copy)."""

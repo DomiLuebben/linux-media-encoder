@@ -75,8 +75,10 @@ class DiscRipperDialog(QDialog):
         # schneller, weil das Laufwerk und nicht die CPU die Grenze setzt.
         self.chk_two_stage.setChecked(str(_store.value("two_stage_rip", "false")).lower() == "true")
         self._on_two_stage_toggled(self.chk_two_stage.isChecked())
+        self.chk_ignore_errors.setChecked(str(_store.value("ignore_disc_errors", "true")).lower() != "false")
         self._update_environment_notice()
         self._refresh_drives()
+
 
         if initial_source:
             self._inspect_and_display_source(initial_source)
@@ -189,7 +191,15 @@ class DiscRipperDialog(QDialog):
         self._stage_row_widgets = (self.edit_staging_dir, btn_stage)
         main_layout.addLayout(stage_row)
 
+        self.chk_ignore_errors = QCheckBox(tr("Fehlertoleranz aktivieren (beschädigte Sektoren & Streamfehler ignorieren)"))
+        self.chk_ignore_errors.setToolTip(tr(
+            "Aktiviert erweiterte Fehlertoleranz für FFmpeg (-err_detect ignore_err, -fflags +discardcorrupt+genpts) sowie conv=noerror,sync beim ISO-Abbild. Verhindert Abbrüche bei Lesefehlern oder zerkratzten Datenträgern."
+        ))
+        self.chk_ignore_errors.toggled.connect(self._on_ignore_errors_toggled)
+        main_layout.addWidget(self.chk_ignore_errors)
+
         self.lbl_warn_encryption = QLabel("")
+
         self.lbl_warn_encryption.setStyleSheet("color: #ffaa00; font-style: italic;")
         self.lbl_warn_encryption.setVisible(False)
         self.lbl_warn_encryption.setWordWrap(True)
@@ -791,6 +801,7 @@ class DiscRipperDialog(QDialog):
                         "source_bitrate": title.bitrate_bps,
                         "staging_dir": self.edit_staging_dir.text().strip(),
                         "two_stage": self.chk_two_stage.isChecked(),
+                        "ignore_errors": self.chk_ignore_errors.isChecked(),
                     },
                     "status": "Bereit",
                     "progress": 0.0,
@@ -869,6 +880,7 @@ class DiscRipperDialog(QDialog):
                         subtitle_stream_idx=sub_idx,
                         output_file=out_path,
                         remux_mkv=True,
+                        ignore_errors=self.chk_ignore_errors.isChecked(),
                     )
                 else:
                     args, final_out = build_bluray_rip_args(
@@ -878,6 +890,7 @@ class DiscRipperDialog(QDialog):
                         subtitle_stream_idx=sub_idx,
                         output_file=out_path,
                         remux_mkv=True,
+                        ignore_errors=self.chk_ignore_errors.isChecked(),
                     )
                 self.pending_video_jobs.append((args, final_out, safe_name))
 
@@ -956,6 +969,7 @@ class DiscRipperDialog(QDialog):
             device_path=self.current_source,
             output_iso_path=out_iso,
             total_size_bytes=total_size,
+            ignore_errors=self.chk_ignore_errors.isChecked(),
             parent=self,
         )
         self.active_worker.progress_updated.connect(self._on_worker_progress)
@@ -969,6 +983,11 @@ class DiscRipperDialog(QDialog):
         for widget in getattr(self, "_stage_row_widgets", ()):
             widget.setEnabled(bool(checked))
         QSettings("LinuxMediaEncoder", "LinuxMediaEncoder").setValue("two_stage_rip", bool(checked))
+
+    def _on_ignore_errors_toggled(self, checked):
+        """Fehlertoleranz-Einstellung persistent speichern."""
+        QSettings("LinuxMediaEncoder", "LinuxMediaEncoder").setValue("ignore_disc_errors", bool(checked))
+
 
     def _on_choose_staging_dir(self):
         """Ordner fuer die Zwischendatei waehlen und dauerhaft merken."""

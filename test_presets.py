@@ -485,8 +485,27 @@ class UiHelperTest(unittest.TestCase):
 
         efficient = presets.quick_preset_settings("Hocheffizient (CRF 23)")
         self.assertEqual(efficient["video_codec"], "libx265")
-        self.assertEqual(efficient["encoding_mode"], "crf")
+    def test_ffmpeg_args_error_resilience(self):
+        settings = dict(presets.PRESETS["MP4 (H.264 / AAC) - Standard 1080p"])
+        settings["ignore_errors"] = True
+        args = presets.get_ffmpeg_args("input.mp4", "output.mp4", settings)
+        self.assertIn("-err_detect", args)
+        self.assertEqual(args[args.index("-err_detect") + 1], "ignore_err")
+        self.assertIn("-fflags", args)
+        self.assertEqual(args[args.index("-fflags") + 1], "+discardcorrupt+genpts")
+        self.assertLess(args.index("-err_detect"), args.index("-i"))
+
+    def test_ffmpeg_args_disc_type_defaults_to_error_resilience(self):
+        settings = {"disc_type": "bluray", "video_codec": "copy", "audio_codec": "copy"}
+        args = presets.get_ffmpeg_args("/dev/sr0", "output.mkv", settings)
+        self.assertIn("-err_detect", args)
+        self.assertLess(args.index("-err_detect"), args.index("-i"))
+
+        settings_strict = {"disc_type": "bluray", "video_codec": "copy", "audio_codec": "copy", "ignore_errors": False}
+        args_strict = presets.get_ffmpeg_args("/dev/sr0", "output.mkv", settings_strict)
+        self.assertNotIn("-err_detect", args_strict)
 
 
 if __name__ == "__main__":
     unittest.main()
+

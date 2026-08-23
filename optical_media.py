@@ -985,17 +985,23 @@ def build_dvd_rip_args(
     output_file: str = "output.mkv",
     preset_settings: Optional[dict[str, Any]] = None,
     remux_mkv: bool = False,
+    ignore_errors: bool = True,
 ) -> Tuple[List[str], str]:
     """
     Erzeugt die vollständige FFmpeg-Befehlszeile für einen DVD-Titel.
     Gibt (ffmpeg_args_liste, final_output_file) zurück.
     """
+    if preset_settings and "ignore_errors" in preset_settings:
+        ignore_errors = bool(preset_settings["ignore_errors"])
+
     input_args = [
         "-f", "dvdvideo",
         "-title", str(title_num),
         "-chapter_start", str(chapter_start),
         "-chapter_end", str(chapter_end),
     ]
+    if ignore_errors:
+        input_args = ["-err_detect", "ignore_err", "-fflags", "+discardcorrupt+genpts"] + input_args
 
     args = ["-y"] + input_args + ["-i", source_path]
 
@@ -1057,11 +1063,18 @@ def build_bluray_rip_args(
     output_file: str = "output.mkv",
     preset_settings: Optional[dict[str, Any]] = None,
     remux_mkv: bool = False,
+    ignore_errors: bool = True,
 ) -> Tuple[List[str], str]:
     """
     Erzeugt die vollständige FFmpeg-Befehlszeile für eine Blu-ray Playlist.
     """
+    if preset_settings and "ignore_errors" in preset_settings:
+        ignore_errors = bool(preset_settings["ignore_errors"])
+
     input_args = ["-playlist", str(playlist_num)]
+    if ignore_errors:
+        input_args = ["-err_detect", "ignore_err", "-fflags", "+discardcorrupt+genpts"] + input_args
+
     probe_url = f"bluray:{source_path}"
     args = ["-y"] + input_args + ["-i", probe_url]
 
@@ -1159,14 +1172,19 @@ def build_iso_dump_command(
     device_path: str,
     output_iso_path: str,
     block_count: Optional[int] = None,
+    conv_options: str = "noerror,sync",
 ) -> List[str]:
     """
     Erzeugt den dd-Befehl für ein 1:1 ISO-Abbild eines optischen Datenträgers.
     """
-    cmd = ["dd", f"if={device_path}", f"of={output_iso_path}", "bs=2048", "status=progress"]
+    cmd = ["dd", f"if={device_path}", f"of={output_iso_path}", "bs=2048"]
+    if conv_options:
+        cmd.append(f"conv={conv_options}")
+    cmd.append("status=progress")
     if block_count and block_count > 0:
         cmd.append(f"count={block_count}")
     return cmd
+
 
 
 # --- ZWISCHENSPEICHER FÜR DEN ZWEISTUFIGEN RIP ---
