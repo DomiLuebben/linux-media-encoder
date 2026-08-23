@@ -9,7 +9,8 @@ geschrieben in Python 3 mit PyQt6.
 
 ## Funktionen
 
-- Warteschlange (Queue) mit mehreren Jobs, Drag & Drop von Dateien
+- **CD / DVD / BD Ripper (Strg+D)**: Einlesen und Rippen von Audio-CDs (inkl. CD-Text nach FLAC/MP3/AAC/Opus), DVD-Video (Titel-, Audio- & Untertitel-Auswahl nach MKV oder Warteschlange), Blu-ray Discs (Playlist-Inspektion) sowie 1:1 ISO-Abbilderstellung
+- Warteschlange (Queue) mit mehreren Jobs, Drag & Drop von Dateien und Disc-/ISO-Images
 - AME-artiger Export-Dialog mit echter Quell-Vorschau & Metadaten (via `ffprobe`)
 - Presets (MP4/H.264, HEVC, VP9, AV1, MKV, Match Source, Social/Delivery, MP3, FLAC, Stream-Copy)
 - Video: Auflösung, Framerate, Profil, **CRF / VBR / CBR**
@@ -37,6 +38,7 @@ geschrieben in Python 3 mit PyQt6.
 - `python` (3.11+)
 - `python-pyqt6`
 - `ffmpeg` (inkl. `ffprobe`) im `PATH`
+- *Optional (für optische Datenträger)*: `cdparanoia` (Audio-CDs), `lsdvd` (DVD-Strukturen), `libbluray` (Blu-ray-Playlists), `libdvdcss` (CSS-DVDs), `libaacs` (AACS-Blu-rays)
 
 ## Direkt starten (ohne Installation)
 

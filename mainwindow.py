@@ -111,7 +111,21 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event):
         for url in event.mimeData().urls():
             file_path = url.toLocalFile()
-            if os.path.isfile(file_path):
+            if not file_path:
+                continue
+
+            lower_path = file_path.lower()
+            is_optical = False
+            if os.path.isfile(file_path) and (lower_path.endswith(".iso") or lower_path.endswith(".img") or lower_path.endswith(".nrg")):
+                is_optical = True
+            elif os.path.isdir(file_path):
+                subdirs = [d.upper() for d in os.listdir(file_path)] if os.path.exists(file_path) else []
+                if "VIDEO_TS" in subdirs or "BDMV" in subdirs or "AUDIO_TS" in subdirs:
+                    is_optical = True
+
+            if is_optical:
+                self._on_rip_disc_clicked(initial_source=file_path)
+            elif os.path.isfile(file_path):
                 self._add_file_to_queue(file_path)
 
     # --- UI INIT METHODS ---
@@ -123,6 +137,12 @@ class MainWindow(QMainWindow):
         add_action = QAction("Datei(en) hinzufügen...", self)
         add_action.triggered.connect(self._on_add_files_clicked)
         file_menu.addAction(add_action)
+
+        rip_action = QAction("CD/DVD/BD rippen...", self)
+        rip_action.setShortcut("Ctrl+D")
+        rip_action.triggered.connect(lambda: self._on_rip_disc_clicked())
+        file_menu.addAction(rip_action)
+
         file_menu.addSeparator()
         exit_action = QAction("Beenden", self)
         exit_action.triggered.connect(self.close)
@@ -207,6 +227,13 @@ class MainWindow(QMainWindow):
         self.action_add.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
         self.action_add.setToolTip("Dateien zur Warteschlange hinzufügen")
         self.toolbar.addAction(self.action_add)
+
+        # Rip-Button
+        self.action_rip = QAction("CD/DVD/BD rippen...", self)
+        self.action_rip.triggered.connect(lambda: self._on_rip_disc_clicked())
+        self.action_rip.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DriveCDIcon))
+        self.action_rip.setToolTip("CD, DVD oder Blu-ray einlesen und rippen (Strg+D)")
+        self.toolbar.addAction(self.action_rip)
 
         # Trim-Button
         self.action_trim = QAction("Video verkürzen", self)
@@ -1666,6 +1693,18 @@ class MainWindow(QMainWindow):
         die ganze Anwendung mit qFatal ab."""
         if not job or "source_size" in job or job.get("_probe_running"):
             return
+
+        settings = job.get("settings", {})
+        if settings.get("input_args") or settings.get("disc_type"):
+            w = settings.get("source_width")
+            h = settings.get("source_height")
+            if w and h:
+                job["source_size"] = (int(w), int(h))
+            else:
+                job["source_size"] = None
+            job["source_duration"] = float(settings.get("source_duration") or 0.0)
+            return
+
         path = job.get("input_file", "")
         if not path or not os.path.exists(path):
             job["source_size"] = None
@@ -2177,6 +2216,24 @@ class MainWindow(QMainWindow):
         for path in file_paths:
             self._add_file_to_queue(path)
 
+    def _on_rip_disc_clicked(self, initial_source=None):
+        """Öffnet den CD/DVD/BD-Ripper-Dialog."""
+        from disc_ripper_dialog import DiscRipperDialog
+        dlg = DiscRipperDialog(initial_source=initial_source, parent=self)
+        dlg.jobs_queued.connect(self._on_disc_jobs_queued)
+        dlg.exec()
+
+    def _on_disc_jobs_queued(self, jobs_list):
+        """Fügt vom DiscRipper übergebene Jobs in die Warteschlange ein."""
+        if not jobs_list:
+            return
+        for job in jobs_list:
+            self.jobs.append(job)
+            self._insert_job_into_table(job)
+            self._prefetch_source_info(job)
+        self.queue_table.selectRow(len(self.jobs) - 1)
+        self._update_ui_state()
+
     def _on_trim_video_clicked(self):
         """Öffnet den Schnittbereich für den aktuell ausgewählten Video-Job."""
         row = self.queue_table.currentRow()
@@ -2521,7 +2578,7 @@ class MainWindow(QMainWindow):
         restored = 0
         for entry in entries if isinstance(entries, list) else []:
             input_file = str(entry.get("input_file", "") or "")
-            if not input_file or not os.path.isfile(input_file):
+            if not input_file or (not os.path.exists(input_file) and not input_file.startswith("/dev/")):
                 continue
             settings = entry.get("settings")
             if not isinstance(settings, dict):

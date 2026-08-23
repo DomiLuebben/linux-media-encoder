@@ -9,7 +9,8 @@ with Python 3 and PyQt6.
 
 ## Features
 
-- Multi-job queue with drag-and-drop file support
+- **CD / DVD / BD Ripper (Ctrl+D)**: Read and rip Audio CDs (with CD-Text metadata to FLAC/MP3/AAC/Opus), DVD-Video (with title and audio/subtitle stream selection to MKV or queue), Blu-ray Discs (with playlist inspection), and 1:1 ISO backups
+- Multi-job queue with drag-and-drop file and disc/ISO image support
 - AME-style export dialog with source preview and metadata from `ffprobe`
 - Presets for MP4/H.264, HEVC, VP9, AV1, MKV, Match Source, Social/Delivery, MP3, FLAC, and stream copy
 - Video controls for resolution, frame rate, profile, and **CRF / VBR / CBR**
@@ -37,6 +38,7 @@ with Python 3 and PyQt6.
 - Python 3.11 or newer
 - PyQt6 (`python-pyqt6` on Arch Linux)
 - FFmpeg, including `ffprobe`, available in `PATH`
+- *Optional (for optical disc ripping)*: `cdparanoia` (Audio CDs), `lsdvd` (DVD structure inspection), `libbluray` (Blu-ray playlists), `libdvdcss` (encrypted DVDs), `libaacs` (encrypted Blu-rays)
 
 ## Run Without Installing
 

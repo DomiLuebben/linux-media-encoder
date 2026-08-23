@@ -81,6 +81,21 @@ class LocalizedWidgetTest(unittest.TestCase):
         self.assertEqual(combo.currentText(), "Lokale KI (automatisch)")
         self.assertEqual(QtWidgets.QComboBox.currentText(combo), "IA locale (automatique)")
 
+    def test_disc_ripper_dialog_translations_complete_en_and_fr(self):
+        from disc_ripper_dialog import DiscRipperDialog
+        from i18n import clear_missing_translations, missing_translations
+
+        for loc in ("en_US", "fr_FR"):
+            set_locale(loc)
+            clear_missing_translations()
+            dialog = DiscRipperDialog()
+            self.assertEqual(
+                missing_translations(),
+                set(),
+                f"Fehlende Übersetzungen im DiscRipperDialog unter {loc}: {missing_translations()}"
+            )
+            dialog.close()
+
 
 if __name__ == "__main__":
     unittest.main()

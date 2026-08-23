@@ -1057,19 +1057,28 @@ def get_ffmpeg_args(input_file, output_file, settings):
     trim_start = parse_seconds(settings.get("trim_start"))
     trim_end = parse_seconds(settings.get("trim_end"))
 
+    # Vor-Input-Optionen (z.B. für optische Medien wie -f dvdvideo -title N oder -playlist N)
+    input_args = settings.get("input_args")
+    if input_args and isinstance(input_args, list):
+        args.extend(str(a) for a in input_args)
+
+    actual_input = input_file
+    if settings.get("disc_type") == "bluray" and not str(input_file).startswith("bluray:"):
+        actual_input = f"bluray:{input_file}"
+
     if is_copy_cut:
         if trim_start is not None and trim_start > 0:
             args.extend(["-ss", f"{trim_start:.3f}"])
         if trim_end is not None and trim_end > 0 and (trim_start is None or trim_end > trim_start):
             duration = trim_end - (trim_start or 0.0)
             args.extend(["-t", f"{duration:.3f}"])
-        args.extend(["-i", input_file])
+        args.extend(["-i", actual_input])
         if trim_start is not None and trim_start > 0:
             # Kopierte Pakete vor dem Seek-Punkt bekämen negative Timestamps —
             # auf 0 verschieben, sonst stolpern MP4-/MKV-Muxer und manche Player.
             args.extend(["-avoid_negative_ts", "make_zero"])
     else:
-        args.extend(["-i", input_file])
+        args.extend(["-i", actual_input])
         if soft_subtitle:
             args.extend(["-i", temp_srt_path])
         if trim_start is not None and trim_start > 0:
@@ -1208,6 +1217,27 @@ def get_ffmpeg_args(input_file, output_file, settings):
             args.extend(["-c:s", "webvtt"])
         else:
             args.extend(["-c:s", "srt"])
+
+    # Optische Medien: Audio-/Untertitel-Spurauswahl, falls angegeben und nicht soft_subtitle
+    audio_idx = settings.get("audio_stream_idx")
+    sub_idx = settings.get("subtitle_stream_idx")
+    if (audio_idx is not None or sub_idx is not None) and not soft_subtitle:
+        if v_codec != "none":
+            args.extend(["-map", "0:v:0?"])
+        if a_codec != "none":
+            if audio_idx == -1:
+                args.extend(["-map", "0:a?"])
+            elif audio_idx is not None and audio_idx >= 0:
+                args.extend(["-map", f"0:a:{audio_idx}?"])
+            else:
+                args.extend(["-map", "0:a:0?"])
+        if sub_idx is not None:
+            if sub_idx == -1:
+                args.extend(["-map", "0:s?"])
+            elif sub_idx >= 0:
+                args.extend(["-map", f"0:s:{sub_idx}?"])
+            if container.lower() == "mkv":
+                args.extend(["-c:s", "copy"])
 
     # MP4/MOV streamingfähig machen (Moov-Atom an den Anfang → schnelles Web-Seeking).
     if container in ("mp4", "mov") and v_codec != "none":

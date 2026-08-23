@@ -9,7 +9,8 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 
 ## Fonctionnalités
 
-- File d’attente multitâche avec glisser-déposer
+- **Extracteur CD / DVD / BD (Ctrl+D)** : Lecture et extraction de CD audio (avec métadonnées CD-Text vers FLAC/MP3/AAC/Opus), DVD-Vidéo (sélection des titres, pistes audio et sous-titres vers MKV ou file d’attente), disques Blu-ray (analyse des listes de lecture) et création d’images ISO 1:1
+- File d’attente multitâche avec glisser-déposer de fichiers et d’images ISO
 - Réglages d’exportation, aperçu de la source et métadonnées via `ffprobe`
 - Préréglages MP4/H.264, HEVC, VP9, AV1, MKV, audio et copie de flux
 - Réglages vidéo pour la résolution, la fréquence d’images, le profil et les modes **CRF / VBR / CBR**
@@ -29,6 +30,7 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 - Python 3.11 ou version ultérieure
 - PyQt6 (`python-pyqt6` sous Arch Linux)
 - FFmpeg avec `ffprobe`, disponible dans le `PATH`
+- *Facultatif (pour les disques optiques)* : `cdparanoia` (CD audio), `lsdvd` (structures DVD), `libbluray` (listes de lecture Blu-ray), `libdvdcss` (DVD chiffrés), `libaacs` (Blu-ray chiffrés)
 
 ## Exécution sans installation
 
