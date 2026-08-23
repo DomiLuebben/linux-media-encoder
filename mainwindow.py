@@ -3021,7 +3021,16 @@ class MainWindow(QMainWindow):
 
         # Bei gesetzten Schnittmarken die erwartete Ausgabedauer vorgeben,
         # sonst rechnet der Fortschritt gegen die volle Quelldauer.
+        # Bei Disc-Quellen ist die Titeldauer aus der Disc-Abfrage bekannt. Sie
+        # vorzugeben macht den Fortschritt unabhaengig davon, ob FFmpeg im
+        # Kopfbereich eine brauchbare Dauer meldet -- bei manchen Playlists und
+        # Titeln fehlt sie oder ist irrefuehrend.
         expected_duration = None
+        if settings.get("disc_type") or settings.get("input_args"):
+            disc_duration = float(settings.get("source_duration") or 0.0)
+            if disc_duration > 0:
+                expected_duration = disc_duration
+
         trim_start = presets.parse_seconds(job["settings"].get("trim_start"))
         trim_end = presets.parse_seconds(job["settings"].get("trim_end"))
         if trim_start is not None or trim_end is not None:
