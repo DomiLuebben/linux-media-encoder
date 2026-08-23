@@ -506,6 +506,53 @@ class UiHelperTest(unittest.TestCase):
         self.assertNotIn("-err_detect", args_strict)
 
 
+    def test_detect_black_bars_letterbox(self):
+        from PyQt6.QtGui import QImage, QColor
+        img = QImage(1920, 1080, QImage.Format.Format_RGB32)
+        img.fill(QColor(0, 0, 0))
+        for y in range(140, 940):
+            for x in range(0, 1920):
+                img.setPixelColor(x, y, QColor(150, 150, 150))
+
+        crop = presets.detect_black_bars(img, 1920, 1080)
+        self.assertIsNotNone(crop)
+        self.assertEqual(crop["x"], 0)
+        self.assertEqual(crop["y"], 140)
+        self.assertEqual(crop["w"], 1920)
+        self.assertEqual(crop["h"], 800)
+
+    def test_detect_black_bars_no_bars_and_all_black(self):
+        from PyQt6.QtGui import QImage, QColor
+        # Vollbild ohne Balken
+        img_full = QImage(1920, 1080, QImage.Format.Format_RGB32)
+        img_full.fill(QColor(200, 200, 200))
+        self.assertIsNone(presets.detect_black_bars(img_full, 1920, 1080))
+
+        # Komplett schwarzes Bild (z.B. Abspann/Schwarzblende)
+        img_black = QImage(1920, 1080, QImage.Format.Format_RGB32)
+        img_black.fill(QColor(0, 0, 0))
+        self.assertIsNone(presets.detect_black_bars(img_black, 1920, 1080))
+
+    def test_ffmpeg_args_video_crop(self):
+        settings = dict(presets.PRESETS["MP4 (H.264 / AAC) - Standard 1080p"])
+        settings["crop"] = {"x": 0, "y": 140, "w": 1920, "h": 800}
+        args = presets.get_ffmpeg_args("input.mp4", "output.mp4", settings)
+        self.assertIn("-vf", args)
+        vf = args[args.index("-vf") + 1]
+        self.assertIn("crop=1920:800:0:140", vf)
+        self.assertIn("scale=1920:1080", vf)
+        # Crop muss vor Scale ausgeführt werden
+        self.assertLess(vf.index("crop="), vf.index("scale="))
+
+    def test_ffmpeg_args_video_crop_forces_reencode(self):
+        settings = {"container": "mp4", "video_codec": "copy", "audio_codec": "copy", "crop": {"x": 0, "y": 140, "w": 1920, "h": 800}}
+        args = presets.get_ffmpeg_args("input.mp4", "output.mp4", settings)
+        # Darf nicht -c:v copy sein, sondern muss re-encoden
+        self.assertEqual(args[args.index("-c:v") + 1], "libx264")
+        self.assertIn("-vf", args)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

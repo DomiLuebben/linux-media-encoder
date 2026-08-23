@@ -18,10 +18,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPixmap, QFont, QPainter, QColor
 
+from crop_label import CropImageLabel
 from i18n import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox, QLabel, QLineEdit,
-    LocalizedString, QPushButton, QTabWidget, QWidget, tr,
+    LocalizedString, QMessageBox, QPushButton, QTabWidget, QWidget, tr,
 )
+
 
 
 class SeekSlider(QSlider):
@@ -117,16 +119,44 @@ class ExportSettingsDialog(QDialog):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
         
-        # Video-Vorschau Bild
-        self.preview_label = QLabel()
+        # Video-Vorschau Bild mit interaktivem Zuschnitt (Cropping)
+        self.preview_label = CropImageLabel("[ Videovorschau ]")
         self.preview_label.setObjectName("preview_frame")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.set_interactive(True)
+        self.preview_label.crop_changed.connect(self._on_video_crop_changed)
         
         # Zunächst Fallback anzeigen; das echte Vorschaubild kommt asynchron
         # aus _trigger_preview_update, sobald ffmpeg den Frame extrahiert hat.
         self._set_preview_image(None)
 
         left_layout.addWidget(self.preview_label)
+
+        # Crop-Steuerung (Zuschnitt & Balken entfernen)
+        crop_toolbar = QHBoxLayout()
+        crop_toolbar.setSpacing(6)
+        
+        self.btn_auto_crop = QPushButton("Auto-Crop (Balken erkennen)")
+        self.btn_auto_crop.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
+        self.btn_auto_crop.setToolTip("Erkennt automatisch schwarze Balken (Letterbox / Pillarbox) im aktuellen Vorschaubild.")
+        self.btn_auto_crop.setAutoDefault(False)
+        self.btn_auto_crop.clicked.connect(self._on_auto_crop_clicked)
+        crop_toolbar.addWidget(self.btn_auto_crop)
+
+        self.btn_clear_crop = QPushButton("Zuschnitt aufheben")
+        self.btn_clear_crop.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
+        self.btn_clear_crop.setToolTip("Setzt den Zuschnitt zurück (volles Bild).")
+        self.btn_clear_crop.setAutoDefault(False)
+        self.btn_clear_crop.clicked.connect(self._on_clear_crop_clicked)
+        crop_toolbar.addWidget(self.btn_clear_crop)
+
+        self.lbl_crop_info = QLabel("Kein Zuschnitt (Volles Bild)")
+        self.lbl_crop_info.setStyleSheet("color: #3daee9; font-weight: bold;")
+        crop_toolbar.addWidget(self.lbl_crop_info)
+        crop_toolbar.addStretch(1)
+
+        left_layout.addLayout(crop_toolbar)
+
         
         # Timeline-Steuerung (Scrubbing für Vorschau + Trim-Punkte)
         self.timeline_widget = QWidget()
@@ -718,10 +748,15 @@ class ExportSettingsDialog(QDialog):
             self.combo_sub_source.blockSignals(False)
             self.combo_sub_translate.blockSignals(False)
             self.combo_sub_mode.blockSignals(False)
+
+            crop = presets.get_crop(self.settings)
+            self.preview_label.set_crop(crop)
+            self._update_crop_ui()
         finally:
             self._loading_settings = False
 
         self._update_widget_visibilities()
+
 
     def _update_summary(self):
         """Aktualisiert das Summary-Feld wie bei Adobe Media Encoder."""
@@ -764,19 +799,24 @@ class ExportSettingsDialog(QDialog):
         elif vcodec == "copy":
             v_sum = str(tr("Video: Kopieren (Stream Copy)"))
         elif keep_source_size:
+            crop = presets.get_crop(self.settings)
+            crop_note = f", Zuschnitt {crop['w']}x{crop['h']}" if crop else ""
             v_encoding = "CRF " + crf if crf else f"{rate_mode} {v_bitrate}"
             v_sum = str(tr(
-                "Video: {codec}, Quelle beibehalten, {encoding}",
-                codec=vcodec, encoding=v_encoding,
+                "Video: {codec}{crop_note}, Quelle beibehalten, {encoding}",
+                codec=vcodec, crop_note=crop_note, encoding=v_encoding,
             ))
         else:
+            crop = presets.get_crop(self.settings)
+            crop_note = f", Zuschnitt {crop['w']}x{crop['h']}" if crop else ""
             v_encoding = "CRF " + crf if crf else f"{rate_mode} {v_bitrate}"
             v_sum = str(tr(
-                "Video: {codec}, {width}x{height}{scale_note} ({fps} fps), {encoding}",
-                codec=vcodec, width=self.spin_width.value(),
+                "Video: {codec}{crop_note}, {width}x{height}{scale_note} ({fps} fps), {encoding}",
+                codec=vcodec, crop_note=crop_note, width=self.spin_width.value(),
                 height=self.spin_height.value(), scale_note=scale_note,
                 fps=self.combo_fps.currentText(), encoding=v_encoding,
             ))
+
             
         # Audio Summary String
         if acodec == "none":
@@ -1314,7 +1354,9 @@ class ExportSettingsDialog(QDialog):
         )
 
         if is_audio:
-            self.preview_label.setText("[ Nur Audio – keine Bildvorschau ]")
+            self.preview_label.setText(str(tr("[ Nur Audio – keine Bildvorschau ]")))
+            self.preview_label.set_interactive(False)
+            self._update_crop_ui()
             return
 
         if not image_path or not os.path.exists(image_path):
@@ -1323,9 +1365,75 @@ class ExportSettingsDialog(QDialog):
 
         if image_path:
             pixmap = QPixmap(image_path).scaled(600, 340, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            src_w = int(self.source_info.get("width") or 1920) if self.source_info else 1920
+            src_h = int(self.source_info.get("height") or 1080) if self.source_info else 1080
+            self.preview_label.set_source_size(src_w, src_h)
             self.preview_label.setPixmap(pixmap)
+            self.preview_label.set_interactive(True)
+            crop = presets.get_crop(self.settings)
+            self.preview_label.set_crop(crop)
+            self._update_crop_ui()
         else:
-            self.preview_label.setText("[ Video-Vorschau ]")
+            self.preview_label.setText(str(tr("[ Video-Vorschau ]")))
+            self._update_crop_ui()
+
+    def _update_crop_ui(self):
+        """Aktualisiert Info-Label und Buttons für den Video-/Bild-Zuschnitt."""
+        if not hasattr(self, "lbl_crop_info"):
+            return
+        crop = presets.get_crop(self.settings)
+        if crop:
+            self.lbl_crop_info.setText(tr("Zuschnitt: {w}×{h} px (ab {x}, {y})", w=crop["w"], h=crop["h"], x=crop["x"], y=crop["y"]))
+            self.btn_clear_crop.setEnabled(True)
+        else:
+            self.lbl_crop_info.setText(tr("Kein Zuschnitt (Volles Bild)"))
+            self.btn_clear_crop.setEnabled(False)
+
+    def _on_video_crop_changed(self, crop):
+        """Wird ausgelöst, wenn der Anwender mit der Maus einen Rahmen aufzieht oder verschiebt."""
+        if crop:
+            self.settings["crop"] = crop
+        else:
+            self.settings.pop("crop", None)
+        self._update_crop_ui()
+        self._update_summary()
+
+    def _on_auto_crop_clicked(self):
+        """Erkennt automatisch schwarze Balken im aktuellen Vorschaubild."""
+        frame_path = getattr(self, "preview_frame_path", None)
+        if not frame_path or not os.path.exists(frame_path):
+            QMessageBox.information(self, tr("Auto-Crop"), tr("Kein Vorschaubild zur Analyse verfügbar."))
+            return
+        src_w = int(self.source_info.get("width") or 1920) if self.source_info else 1920
+        src_h = int(self.source_info.get("height") or 1080) if self.source_info else 1080
+        crop = presets.detect_black_bars(frame_path, src_w, src_h)
+        if crop:
+            self.settings["crop"] = crop
+            self.preview_label.set_crop(crop)
+            self._update_crop_ui()
+            self._update_summary()
+            QMessageBox.information(
+                self,
+                tr("Auto-Crop"),
+                tr("Schwarze Balken erkannt!\nZuschnitt auf {w}×{h} px (ab {x}, {y}) gesetzt.", w=crop["w"], h=crop["h"], x=crop["x"], y=crop["y"])
+            )
+        else:
+            self.settings.pop("crop", None)
+            self.preview_label.set_crop(None)
+            self._update_crop_ui()
+            self._update_summary()
+            QMessageBox.information(
+                self,
+                tr("Auto-Crop"),
+                tr("Keine schwarzen Balken erkannt — das Bild füllt bereits den gesamten Frame.")
+            )
+
+    def _on_clear_crop_clicked(self):
+        """Setzt den Zuschnitt zurück (volles Bild)."""
+        self.settings.pop("crop", None)
+        self.preview_label.set_crop(None)
+        self._update_crop_ui()
+        self._update_summary()
 
     def _retain_preview_process(self, proc):
         """Hält einen verworfenen QProcess bis zu dessen echtem Ende am Leben."""
@@ -1397,19 +1505,33 @@ class ExportSettingsDialog(QDialog):
         if sub_active and srt_path and os.path.exists(srt_path):
             filters.append(presets.build_subtitles_filter(srt_path))
 
-        args = [
-            "-y", "-ss", f"{seek:.2f}", "-i", self.input_file,
+        args = ["-y"]
+        input_args = self.settings.get("input_args")
+        if input_args and isinstance(input_args, list):
+            args.extend(str(a) for a in input_args)
+
+        # Fehlertoleranz auch bei Vorschau-Extraktion nutzen
+        if self.settings.get("ignore_errors", False) or (self.settings.get("disc_type") and self.settings.get("ignore_errors") is not False):
+            args.extend(["-err_detect", "ignore_err", "-fflags", "+discardcorrupt+genpts"])
+
+        actual_input = self.input_file
+        if self.settings.get("disc_type") == "bluray" and not str(self.input_file).startswith("bluray:"):
+            actual_input = f"bluray:{self.input_file}"
+
+        args.extend([
+            "-ss", f"{seek:.2f}", "-i", actual_input,
             "-frames:v", "1", "-vf", ",".join(filters), "-q:v", "3", out_path,
-        ]
+        ])
         proc = QProcess(self)
         self._preview_proc = proc
         proc.finished.connect(
-            lambda code, _status, pr=proc, p=out_path: self._on_preview_extracted(pr, p, code)
+            lambda code, _status, pr=proc, p=out_path, slf=self: slf._on_preview_extracted(pr, p, code)
         )
         proc.errorOccurred.connect(
-            lambda error, pr=proc: self._on_preview_failed_to_start(pr, error)
+            lambda error, pr=proc, slf=self: slf._on_preview_failed_to_start(pr, error)
         )
         proc.start("ffmpeg", args)
+
 
     def _on_preview_extracted(self, proc, out_path, exit_code):
         if proc is not self._preview_proc:
@@ -1427,6 +1549,7 @@ class ExportSettingsDialog(QDialog):
             return
         self._preview_proc = None
         self._set_preview_image(None)
+
 
     def _update_tab_enables(self):
         """Fix für fehlende Funktion in der Original-Implementierung."""
@@ -1566,7 +1689,14 @@ class ExportSettingsDialog(QDialog):
         self.settings["subtitles_mode"] = self.combo_sub_mode.currentText()
         self.settings["ignore_errors"] = self.chk_ignore_errors.isChecked()
         
+        crop = presets.get_crop(self.settings)
+        if crop:
+            self.settings["crop"] = crop
+        else:
+            self.settings.pop("crop", None)
+
         return self.output_file, self.settings
+
 
 
     def _on_vcodec_changed(self, text):
@@ -2038,6 +2168,11 @@ class ExportSettingsDialog(QDialog):
                 pass
         self._preview_temp_files.clear()
         super().done(result)
+
+    def closeEvent(self, event):
+        self.done(0)
+        super().closeEvent(event)
+
 
     @staticmethod
     def _format_timecode(seconds):

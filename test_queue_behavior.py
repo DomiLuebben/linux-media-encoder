@@ -233,11 +233,42 @@ class DiscTwoStageQueueTest(unittest.TestCase):
             # UI Checkbox umschalten
             window.chk_ignore_errors.setChecked(True)
             self.assertTrue(job["settings"].get("ignore_errors"))
-            
+
             window.chk_ignore_errors.setChecked(False)
             self.assertFalse(job["settings"].get("ignore_errors"))
         finally:
             window.close()
+
+
+    def test_export_settings_dialog_video_crop(self):
+        import presets
+        from export_settings_dialog import ExportSettingsDialog
+        settings = dict(presets.PRESETS["MP4 (H.264 / AAC) - Standard 1080p"])
+        dlg = ExportSettingsDialog(
+            input_file="test_input.mp4",
+            output_file="test_output.mp4",
+            settings=settings,
+        )
+        dlg.source_info = {"width": 1920, "height": 1080, "duration": 60.0}
+
+        try:
+            self.assertTrue(hasattr(dlg, "btn_auto_crop"))
+            self.assertTrue(hasattr(dlg, "btn_clear_crop"))
+            self.assertTrue(hasattr(dlg, "preview_label"))
+            
+            # Crop manuell setzen
+            crop_val = {"x": 0, "y": 140, "w": 1920, "h": 800}
+            dlg._on_video_crop_changed(crop_val)
+            self.assertEqual(dlg.settings.get("crop"), crop_val)
+            self.assertIn("1920×800", dlg.lbl_crop_info.text())
+            
+            # Crop aufheben
+            dlg._on_clear_crop_clicked()
+            self.assertNotIn("crop", dlg.settings)
+            self.assertIn("Kein Zuschnitt", dlg.lbl_crop_info.text())
+        finally:
+            dlg.close()
+
 
 
 

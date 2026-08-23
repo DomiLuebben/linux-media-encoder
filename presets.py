@@ -704,6 +704,128 @@ def get_crop(settings):
     return {"x": x, "y": y, "w": w, "h": h}
 
 
+def detect_black_bars(image_or_path, source_w=None, source_h=None, threshold=24):
+    """
+    Erkennt automatisch schwarze Balken (Letterbox oben/unten, Pillarbox links/rechts)
+    in einem Bild oder Vorschaubild. Gibt ein Crop-Dict {'x': x, 'y': y, 'w': w, 'h': h}
+    in Quell-Pixeln zurück oder None, wenn keine relevanten Balken vorhanden sind.
+    """
+    import os
+    from PyQt6.QtGui import QImage
+
+    if isinstance(image_or_path, str):
+        if not os.path.exists(image_or_path):
+            return None
+        img = QImage(image_or_path)
+    elif isinstance(image_or_path, QImage):
+        img = image_or_path
+    elif hasattr(image_or_path, "toImage"):
+        img = image_or_path.toImage()
+    else:
+        return None
+
+    if img.isNull() or img.width() < 16 or img.height() < 16:
+        return None
+
+    pw, ph = img.width(), img.height()
+
+    # Oben (Letterbox top)
+    top = 0
+    step_x = max(1, pw // 40)
+    x_start = int(pw * 0.05)
+    x_end = int(pw * 0.95)
+
+    for y in range(ph):
+        row_black = True
+        for x in range(x_start, x_end, step_x):
+            c = img.pixelColor(x, y)
+            lum = 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+            if lum > threshold:
+                row_black = False
+                break
+        if not row_black:
+            top = y
+            break
+
+    # Unten (Letterbox bottom)
+    bottom = ph
+    for y in range(ph - 1, -1, -1):
+        row_black = True
+        for x in range(x_start, x_end, step_x):
+            c = img.pixelColor(x, y)
+            lum = 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+            if lum > threshold:
+                row_black = False
+                break
+        if not row_black:
+            bottom = y + 1
+            break
+
+    # Links (Pillarbox left)
+    content_h = max(1, bottom - top)
+    step_y = max(1, content_h // 40)
+    y_start = int(top + content_h * 0.05)
+    y_end = int(top + content_h * 0.95)
+
+    left = 0
+    for x in range(pw):
+        col_black = True
+        for y in range(y_start, y_end, step_y):
+            c = img.pixelColor(x, y)
+            lum = 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+            if lum > threshold:
+                col_black = False
+                break
+        if not col_black:
+            left = x
+            break
+
+    # Rechts (Pillarbox right)
+    right = pw
+    for x in range(pw - 1, -1, -1):
+        col_black = True
+        for y in range(y_start, y_end, step_y):
+            c = img.pixelColor(x, y)
+            lum = 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+            if lum > threshold:
+                col_black = False
+                break
+        if not col_black:
+            right = x + 1
+            break
+
+    # Wenn der erkannte Bereich fast das ganze Bild abdeckt (z. B. <= 2 Pixel Balken), kein Crop nötig
+    if top <= 2 and (ph - bottom) <= 2 and left <= 2 and (pw - right) <= 2:
+        return None
+
+    # Wenn das Bild komplett schwarz ist (z. B. Fade-to-Black Frame)
+    if (right - left) < pw * 0.1 or (bottom - top) < ph * 0.1:
+        return None
+
+    # Auf Quell-Dimensionen skalieren
+    src_w = int(source_w or pw)
+    src_h = int(source_h or ph)
+    scale_x = src_w / pw
+    scale_y = src_h / ph
+
+    crop_x = int(round(left * scale_x))
+    crop_y = int(round(top * scale_y))
+    crop_w = int(round((right - left) * scale_x))
+    crop_h = int(round((bottom - top) * scale_y))
+
+    # Auf Quellmaße begrenzen und gerade Kantenlängen erzwingen
+    crop_x = max(0, min(src_w - 2, crop_x)) & ~1
+    crop_y = max(0, min(src_h - 2, crop_y)) & ~1
+    crop_w = max(2, min(src_w - crop_x, crop_w)) & ~1
+    crop_h = max(2, min(src_h - crop_y, crop_h)) & ~1
+
+    if crop_w >= src_w - 4 and crop_h >= src_h - 4:
+        return None
+
+    return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}
+
+
+
 # Erlaubte Drehwinkel (im Uhrzeigersinn) für den Bild-Dreh-Workflow.
 ROTATE_ANGLES = (0, 90, 180, 270)
 
@@ -1050,9 +1172,11 @@ def get_ffmpeg_args(input_file, output_file, settings):
     # Timestamps bleiben unverändert (wichtig für Untertitel-Synchronität).
     v_lower = str(settings.get("video_codec", "libx264")).strip().lower()
     a_lower = _resolve_audio_codec(settings).lower()
+    crop = get_crop(settings)
     is_copy_cut = (
         not soft_subtitle
         and not hard_subtitle
+        and not crop
         and (v_lower == "copy" or (v_lower == "none" and a_lower == "copy"))
     )
 
@@ -1099,8 +1223,8 @@ def get_ffmpeg_args(input_file, output_file, settings):
     if v_codec.lower() in ("copy", "none"):
         v_codec = v_codec.lower()
 
-    # Wenn Hard-Subtitles eingebrannt werden, muss das Video neu codiert werden (keine Stream-Kopie möglich)
-    if hard_subtitle and v_codec == "copy":
+    # Wenn Hard-Subtitles oder Crop aktiv sind, muss das Video neu codiert werden (keine Stream-Kopie möglich)
+    if (hard_subtitle or crop) and v_codec == "copy":
         v_codec = _default_video_codec_for_container(container)
 
     # Stream-Mapping bei Soft-Untertitelung (um korrekte Spurenzuweisung zu garantieren)
@@ -1122,12 +1246,20 @@ def get_ffmpeg_args(input_file, output_file, settings):
         args.extend(["-c:v", v_codec])
         if v_codec != "copy":
             vf_filters = []
+            if crop:
+                cw = max(2, crop["w"] & ~1)
+                ch = max(2, crop["h"] & ~1)
+                cx = max(0, crop["x"])
+                cy = max(0, crop["y"])
+                vf_filters.append(f"crop={cw}:{ch}:{cx}:{cy}")
+
             scale_mode = get_scale_mode(settings)
             if scale_mode != SCALE_MODE_SOURCE:
                 width = settings.get("width", "")
                 height = settings.get("height", "")
                 if width and height:
                     vf_filters.append(build_scale_filter(width, height, scale_mode, even_dimensions=True))
+
 
             # Framerate ist von der Skalierung unabhängig; leer / "Wie Quelle"
             # bedeutet: Quell-Framerate unverändert lassen (kein -r).

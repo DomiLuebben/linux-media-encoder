@@ -411,7 +411,18 @@ EN_US = {
     "Fehlertoleranz (Stream- und Dekodierfehler ignorieren)": "Error tolerance (ignore stream and decoding errors)",
     "Fügt FFmpeg-Flags (-err_detect ignore_err, -fflags +discardcorrupt+genpts) hinzu, um bei beschädigten Quelldateien oder Streams nicht abzubrechen.": "Adds FFmpeg flags (-err_detect ignore_err, -fflags +discardcorrupt+genpts) to prevent aborting on damaged source files or streams.",
     "Fehlertoleranz": "Error tolerance",
+    "Auto-Crop (Balken erkennen)": "Auto-Crop (Detect black bars)",
+    "Auto-Crop": "Auto-Crop",
+    "Erkennt automatisch schwarze Balken (Letterbox / Pillarbox) im aktuellen Vorschaubild.": "Automatically detects black bars (letterbox / pillarbox) in the current preview frame.",
+    "Zuschnitt aufheben": "Clear crop",
+    "Setzt den Zuschnitt zurück (volles Bild).": "Resets the crop (full frame).",
+    "Kein Zuschnitt (Volles Bild)": "No crop (full frame)",
+    "Zuschnitt: {w}×{h} px (ab {x}, {y})": "Crop: {w}×{h} px (at {x}, {y})",
+    "Kein Vorschaubild zur Analyse verfügbar.": "No preview frame available for analysis.",
+    "Schwarze Balken erkannt!\nZuschnitt auf {w}×{h} px (ab {x}, {y}) gesetzt.": "Black bars detected!\nCrop set to {w}×{h} px (at {x}, {y}).",
+    "Keine schwarzen Balken erkannt — das Bild füllt bereits den gesamten Frame.": "No black bars detected — the video already fills the entire frame.",
 }
+
 
 
 
@@ -969,5 +980,16 @@ FR_FR.update({
     "Fehlertoleranz (Stream- und Dekodierfehler ignorieren)": "Tolérance aux erreurs (ignorer les erreurs de flux et de décodage)",
     "Fügt FFmpeg-Flags (-err_detect ignore_err, -fflags +discardcorrupt+genpts) hinzu, um bei beschädigten Quelldateien oder Streams nicht abzubrechen.": "Ajoute les options FFmpeg (-err_detect ignore_err, -fflags +discardcorrupt+genpts) pour éviter les interruptions sur fichiers sources ou flux corrompus.",
     "Fehlertoleranz": "Tolérance aux erreurs",
+    "Auto-Crop (Balken erkennen)": "Auto-Crop (Détecter bandes noires)",
+    "Auto-Crop": "Auto-Crop",
+    "Erkennt automatisch schwarze Balken (Letterbox / Pillarbox) im aktuellen Vorschaubild.": "Détecte automatiquement les bandes noires (letterbox / pillarbox) dans l’image d’aperçu actuelle.",
+    "Zuschnitt aufheben": "Effacer le recadrage",
+    "Setzt den Zuschnitt zurück (volles Bild).": "Réinitialise le recadrage (image complète).",
+    "Kein Zuschnitt (Volles Bild)": "Aucun recadrage (image complète)",
+    "Zuschnitt: {w}×{h} px (ab {x}, {y})": "Recadrage : {w}×{h} px (à {x}, {y})",
+    "Kein Vorschaubild zur Analyse verfügbar.": "Aucune image d’aperçu disponible pour analyse.",
+    "Schwarze Balken erkannt!\nZuschnitt auf {w}×{h} px (ab {x}, {y}) gesetzt.": "Bandes noires détectées !\nRecadrage défini sur {w}×{h} px (à {x}, {y}).",
+    "Keine schwarzen Balken erkannt — das Bild füllt bereits den gesamten Frame.": "Aucune bande noire détectée — la vidéo remplit déjà tout le cadre.",
 })
+
 
