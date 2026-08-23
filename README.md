@@ -43,15 +43,18 @@ with Python 3 and PyQt6.
 > **Installing missing components:** When it opens, the ripper dialog checks which optional
 > tools and libraries are present and offers an “Install missing components…” button. The
 > distribution family is derived from `ID` and `ID_LIKE` in `/etc/os-release` (covering
-> derivatives such as CachyOS, EndeavourOS, Garuda, Linux Mint, TUXEDO OS, Pop!_OS, Bazzite or
-> Nobara), and authentication uses `pkexec`. The full command is shown before it runs. Packages
+> derivatives such as CachyOS, EndeavourOS, Garuda, Linux Mint, TUXEDO OS, Pop!_OS, Bazzite,
+> Nobara or GeckoLinux); `pacman`, `apt`, `dnf` and `zypper` are supported, as are the immutable
+> variants `rpm-ostree` (Bazzite, Silverblue, Kinoite) and `transactional-update` (openSUSE
+> MicroOS, Aeon). Authentication uses `pkexec`. The full command is shown before it runs. Packages
 > that cannot be found on the system are skipped and listed individually instead of failing the
 > whole run. LME does not enable third-party sources (RPM Fusion, AUR) on its own. On Debian,
 > Ubuntu and Mint, libdvdcss is built from source via `libdvd-pkg`; the required debconf step is
 > pre-answered and runs inside the same privileged call, so the password prompt appears only
 > once. It needs an internet connection and takes a few minutes; progress is shown in the log.
 > On Fedora, LME checks whether RPM Fusion (free) is set up; if it is not, a notice asks you to
-> set it up — all other components are still installed.
+> set it up — all other components are still installed. The same applies to **Packman** on
+> openSUSE, which is where libdvdcss lives there.
 > On Arch, `pacman -Si` — and therefore the actual state of the machine — decides whether a
 > package comes from a configured repository or only from the AUR: CachyOS, EndeavourOS and
 > Garuda carry many packages in their own repositories, and that is detected as such. The

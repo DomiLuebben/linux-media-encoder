@@ -23,6 +23,7 @@ from dependency_installer import (
     parse_os_release,
     plan_installation,
     rpmfusion_free_enabled,
+    packman_enabled,
     arch_package_repository,
     find_aur_helper,
     AUR_ONLY_NOTE,
@@ -45,6 +46,11 @@ OS_RELEASE_SAMPLES = {
     "nobara": 'NAME="Nobara Linux"\nID=nobara\nID_LIKE=fedora\n',
     "fedora": 'NAME="Fedora Linux"\nID=fedora\n',
     "kinoite": 'NAME="Fedora Linux"\nID=fedora\nVARIANT_ID=kinoite\n',
+    "tumbleweed": 'NAME="openSUSE Tumbleweed"\nID="opensuse-tumbleweed"\nID_LIKE="opensuse suse"\n',
+    "leap": 'NAME="openSUSE Leap"\nID="opensuse-leap"\nID_LIKE="suse opensuse"\n',
+    "aeon": 'NAME="openSUSE Aeon"\nID="opensuse-aeon"\nID_LIKE="suse opensuse"\n',
+    "sles": 'NAME="SLES"\nID="sles"\nID_LIKE="suse"\n',
+    "gecko": 'NAME="GeckoLinux"\nID=gecko\nID_LIKE="suse opensuse"\n',
 }
 
 EXPECTED_FAMILY = {
@@ -62,6 +68,11 @@ EXPECTED_FAMILY = {
     "nobara": DistroFamily.FEDORA,
     "fedora": DistroFamily.FEDORA,
     "kinoite": DistroFamily.FEDORA,
+    "tumbleweed": DistroFamily.SUSE,
+    "leap": DistroFamily.SUSE,
+    "aeon": DistroFamily.SUSE,
+    "sles": DistroFamily.SUSE,
+    "gecko": DistroFamily.SUSE,
 }
 
 
@@ -124,6 +135,20 @@ class InstallCommandTest(unittest.TestCase):
         self.assertEqual(
             build_install_command(DistroFamily.FEDORA, ["lsdvd"]),
             ["pkexec", "dnf", "install", "-y", "lsdvd"],
+        )
+
+    def test_suse_uses_zypper(self):
+        self.assertEqual(
+            build_install_command(DistroFamily.SUSE, ["lsdvd", "cdparanoia"]),
+            ["pkexec", "zypper", "--non-interactive", "install", "lsdvd", "cdparanoia"],
+        )
+
+    def test_immutable_suse_uses_transactional_update(self):
+        # MicroOS/Aeon schreiben in einen neuen Schnappschuss, nicht ins
+        # laufende System.
+        self.assertEqual(
+            build_install_command(DistroFamily.SUSE, ["lsdvd"], is_immutable=True),
+            ["pkexec", "transactional-update", "--non-interactive", "pkg", "install", "lsdvd"],
         )
 
     def test_immutable_fedora_uses_rpm_ostree(self):
@@ -243,6 +268,38 @@ class ArchRepositoryTest(unittest.TestCase):
             self.assertIsNone(find_aur_helper())
 
 
+class PackmanTest(unittest.TestCase):
+
+    def test_zypper_repo_list_decides_when_it_works(self):
+        mit = "Alias | Name | Aktiv\n1 | repo-oss | Ja\n2 | packman | Ja\n"
+        ohne = "Alias | Name | Aktiv\n1 | repo-oss | Ja\n"
+        self.assertTrue(packman_enabled(lambda cmd, timeout=60: (0, mit)))
+        self.assertFalse(packman_enabled(lambda cmd, timeout=60: (0, ohne)))
+
+    def test_repo_files_are_the_fallback(self):
+        def kaputtes_zypper(cmd, timeout=60):
+            return 127, ""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertFalse(packman_enabled(kaputtes_zypper, tmpdir))
+
+            pfad = os.path.join(tmpdir, "packman.repo")
+            with open(pfad, "w", encoding="utf-8") as handle:
+                handle.write("[packman]\nname=Packman\nbaseurl=https://ftp.gwdg.de/pub/linux/misc/packman/suse/\nenabled=0\n")
+            self.assertFalse(packman_enabled(kaputtes_zypper, tmpdir))
+
+            with open(pfad, "w", encoding="utf-8") as handle:
+                handle.write("[packman]\nname=Packman\nenabled=1\n")
+            self.assertTrue(packman_enabled(kaputtes_zypper, tmpdir))
+
+    def test_packman_recognised_by_url_even_with_odd_alias(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "extra.repo"), "w", encoding="utf-8") as handle:
+                handle.write("[meine-multimedia-quelle]\nname=Multimedia\n"
+                             "baseurl=https://ftp.gwdg.de/pub/linux/misc/packman/suse/\nenabled=1\n")
+            self.assertTrue(packman_enabled(lambda cmd, timeout=60: (127, ""), tmpdir))
+
+
 class InstallPlanTest(unittest.TestCase):
 
     def _arch(self, immutable=False):
@@ -304,6 +361,39 @@ class InstallPlanTest(unittest.TestCase):
         plan = plan_installation(["ffmpeg", "ffprobe"], self._arch(), lambda cmd, timeout=60: (0, ""))
         self.assertEqual(plan.packages, ["ffmpeg"])
 
+    def test_suse_without_packman_asks_instead_of_failing(self):
+        def runner(cmd, timeout=60):
+            if cmd[-1] == "lr":
+                return 0, "Alias | Name\n1 | repo-oss\n"
+            return 0, cmd[-1]
+
+        info = DistroInfo(family=DistroFamily.SUSE, pretty_name="openSUSE Tumbleweed")
+        plan = plan_installation(["libdvdcss", "lsdvd"], info, runner)
+        self.assertEqual(plan.needs_extra_repo, "packman")
+        self.assertEqual(plan.packages, ["lsdvd"])
+        self.assertEqual(plan.command[:3], ["pkexec", "zypper", "--non-interactive"])
+
+    def test_suse_with_packman_installs_libdvdcss_normally(self):
+        def runner(cmd, timeout=60):
+            if cmd[-1] == "lr":
+                return 0, "Alias | Name\n1 | packman\n"
+            return 0, cmd[-1]
+
+        info = DistroInfo(family=DistroFamily.SUSE, pretty_name="openSUSE Leap")
+        plan = plan_installation(["libdvdcss"], info, runner)
+        self.assertEqual(plan.needs_extra_repo, "")
+        self.assertEqual(plan.packages, ["libdvdcss2"])
+
+    def test_zypper_search_needs_both_exit_code_and_name(self):
+        # Ein Rueckgabewert 0 allein genuegt nicht: 'zypper search' liefert bei
+        # leerem Ergebnis 104, aber darauf allein wollen wir uns nicht stuetzen.
+        self.assertTrue(package_exists(DistroFamily.SUSE, "lsdvd",
+                                       lambda cmd, timeout=60: (0, "i | lsdvd | Paket\n")))
+        self.assertFalse(package_exists(DistroFamily.SUSE, "lsdvd",
+                                        lambda cmd, timeout=60: (0, "Keine Treffer.\n")))
+        self.assertFalse(package_exists(DistroFamily.SUSE, "lsdvd",
+                                        lambda cmd, timeout=60: (104, "")))
+
     def test_unknown_distribution_yields_only_a_note(self):
         info = DistroInfo(family=DistroFamily.UNKNOWN, pretty_name="Exotisch")
         plan = plan_installation(["lsdvd"], info, lambda cmd, timeout=60: (0, ""))
@@ -321,7 +411,7 @@ class InstallPlanTest(unittest.TestCase):
 
         info = DistroInfo(family=DistroFamily.FEDORA, pretty_name="Fedora 42")
         plan = plan_installation(["libdvdcss", "lsdvd"], info, runner)
-        self.assertTrue(plan.needs_rpmfusion)
+        self.assertEqual(plan.needs_extra_repo, "rpmfusion")
         self.assertEqual(plan.packages, ["lsdvd"])
         self.assertNotIn("libdvdcss", plan.unresolved)
 
@@ -333,7 +423,7 @@ class InstallPlanTest(unittest.TestCase):
 
         info = DistroInfo(family=DistroFamily.FEDORA, pretty_name="Fedora 42")
         plan = plan_installation(["libdvdcss"], info, runner)
-        self.assertFalse(plan.needs_rpmfusion)
+        self.assertEqual(plan.needs_extra_repo, "")
         self.assertEqual(plan.packages, ["libdvdcss"])
 
     def test_immutable_system_flags_reboot(self):

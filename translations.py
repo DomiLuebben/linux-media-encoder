@@ -386,6 +386,8 @@ EN_US = {
     "Von Hand ginge das mit dem vorhandenen AUR-Helfer: {helper} -S {names}": "You could do this manually with the AUR helper found on this system: {helper} -S {names}",
     "Auf diesem System ist kein AUR-Helfer installiert (etwa paru oder yay).": "No AUR helper is installed on this system (such as paru or yay).",
     "Diese Komponenten sind in keiner auf diesem System eingerichteten Paketquelle enthalten und damit nur über das AUR erhältlich. LME baut grundsätzlich keine AUR-Pakete: dabei würde fremder Bauplan-Quelltext auf dem Rechner ausgeführt, und makepkg verweigert ohnehin den Lauf mit Administratorrechten.": "These components are not in any package source configured on this system and are therefore only available from the AUR. LME never builds AUR packages: doing so would execute third-party build scripts on your machine, and makepkg refuses to run with administrator rights anyway.",
+    "Packman wird benötigt": "Packman is required",
+    "Zum Lesen kopiergeschützter DVDs wird libdvdcss benötigt. Unter openSUSE liegt dieses Paket nicht in den Standardquellen, sondern im Repository Packman, das auf diesem System nicht eingebunden ist.\n\nBitte Packman einbinden und aktivieren, danach diesen Dialog erneut öffnen. Die Anleitung steht auf packman.links2linux.de.\n\nAlle übrigen Komponenten lassen sich unabhängig davon installieren.": "Reading copy-protected DVDs requires libdvdcss. On openSUSE this package is not in the default repositories but in the Packman repository, which is not added on this system.\n\nPlease add and enable Packman, then open this dialog again. Instructions are on packman.links2linux.de.\n\nAll other components can be installed independently of this.",
 }
 
 
@@ -686,6 +688,8 @@ FR_FR = {
     "Von Hand ginge das mit dem vorhandenen AUR-Helfer: {helper} -S {names}": "Vous pouvez le faire manuellement avec l’assistant AUR présent sur ce système : {helper} -S {names}",
     "Auf diesem System ist kein AUR-Helfer installiert (etwa paru oder yay).": "Aucun assistant AUR n’est installé sur ce système (par exemple paru ou yay).",
     "Diese Komponenten sind in keiner auf diesem System eingerichteten Paketquelle enthalten und damit nur über das AUR erhältlich. LME baut grundsätzlich keine AUR-Pakete: dabei würde fremder Bauplan-Quelltext auf dem Rechner ausgeführt, und makepkg verweigert ohnehin den Lauf mit Administratorrechten.": "Ces composants ne figurent dans aucune source de paquets configurée sur ce système et ne sont donc disponibles que depuis l’AUR. LME ne compile jamais de paquets AUR : cela exécuterait des scripts de compilation tiers sur votre machine, et makepkg refuse de toute façon de s’exécuter avec les droits d’administrateur.",
+    "Packman wird benötigt": "Packman est requis",
+    "Zum Lesen kopiergeschützter DVDs wird libdvdcss benötigt. Unter openSUSE liegt dieses Paket nicht in den Standardquellen, sondern im Repository Packman, das auf diesem System nicht eingebunden ist.\n\nBitte Packman einbinden und aktivieren, danach diesen Dialog erneut öffnen. Die Anleitung steht auf packman.links2linux.de.\n\nAlle übrigen Komponenten lassen sich unabhängig davon installieren.": "La lecture des DVD protégés nécessite libdvdcss. Sur openSUSE, ce paquet ne figure pas dans les dépôts par défaut mais dans le dépôt Packman, qui n’est pas ajouté sur ce système.\n\nVeuillez ajouter et activer Packman, puis rouvrir cette boîte de dialogue. Les instructions se trouvent sur packman.links2linux.de.\n\nTous les autres composants peuvent être installés indépendamment.",
 }
 
 

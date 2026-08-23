@@ -126,11 +126,15 @@ class LocalizedWidgetTest(unittest.TestCase):
             ],
             unresolved=["libbdplus"],
             needs_reboot=True,
-            needs_rpmfusion=True,
         )
 
-        for loc in ("en_US", "fr_FR"):
+        # Beide Fremdquellen-Zweige durchlaufen: die Texte unterscheiden sich.
+        for loc, extra_repo in (
+            ("en_US", "rpmfusion"), ("en_US", "packman"),
+            ("fr_FR", "rpmfusion"), ("fr_FR", "packman"),
+        ):
             set_locale(loc)
+            plan.needs_extra_repo = extra_repo
             dialog = DiscRipperDialog()
             dialog._install_plan = plan
             clear_missing_translations()

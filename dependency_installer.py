@@ -31,6 +31,7 @@ class DistroFamily(Enum):
     ARCH = "arch"
     DEBIAN = "debian"
     FEDORA = "fedora"
+    SUSE = "suse"
     UNKNOWN = "unknown"
 
 
@@ -71,7 +72,26 @@ _FAMILY_BY_ID: Dict[str, DistroFamily] = {
     "aurora": DistroFamily.FEDORA,
     "silverblue": DistroFamily.FEDORA,
     "kinoite": DistroFamily.FEDORA,
+    # openSUSE und SLE. Tumbleweed meldet ID="opensuse-tumbleweed" mit
+    # ID_LIKE="opensuse suse", die beiden Sammelbegriffe fangen den Rest.
+    "suse": DistroFamily.SUSE,
+    "opensuse": DistroFamily.SUSE,
+    "opensuse-leap": DistroFamily.SUSE,
+    "opensuse-tumbleweed": DistroFamily.SUSE,
+    "opensuse-slowroll": DistroFamily.SUSE,
+    "opensuse-microos": DistroFamily.SUSE,
+    "opensuse-aeon": DistroFamily.SUSE,
+    "opensuse-kalpa": DistroFamily.SUSE,
+    "sles": DistroFamily.SUSE,
+    "sled": DistroFamily.SUSE,
+    "sle-micro": DistroFamily.SUSE,
 }
+
+# openSUSE MicroOS, Aeon und Kalpa sind unveränderlich, benutzen aber nicht
+# ostree, sondern transactional-update auf Btrfs-Schnappschüssen.
+_SUSE_TRANSACTIONAL_IDS = frozenset({
+    "opensuse-microos", "opensuse-aeon", "opensuse-kalpa", "sle-micro",
+})
 
 
 @dataclass
@@ -118,13 +138,18 @@ def detect_distro(
     except OSError:
         values = {}
 
+    distro_id = (values.get("ID") or "").strip().lower()
     return DistroInfo(
         family=family_from_os_release(values),
-        distro_id=(values.get("ID") or "").strip().lower(),
+        distro_id=distro_id,
         pretty_name=values.get("PRETTY_NAME") or values.get("NAME") or "",
-        # Unveränderliche Systeme (Bazzite & Co.) installieren nicht mit dnf,
-        # sondern mit rpm-ostree in eine neue Systemschicht.
-        is_immutable=os.path.exists(ostree_marker),
+        # Unveränderliche Systeme installieren nicht in das laufende System:
+        # Fedora-Ableger (Bazzite & Co.) über rpm-ostree, openSUSE MicroOS und
+        # Aeon über transactional-update.
+        is_immutable=(
+            os.path.exists(ostree_marker)
+            or (distro_id in _SUSE_TRANSACTIONAL_IDS and bool(shutil.which("transactional-update")))
+        ),
     )
 
 
@@ -163,6 +188,19 @@ COMPONENT_PACKAGES: Dict[DistroFamily, Dict[str, Tuple[str, ...]]] = {
         "libdvdcss": ("libdvdcss",),
         "libaacs": ("libaacs",),
         "libbdplus": ("libbdplus",),
+    },
+    DistroFamily.SUSE: {
+        # openSUSE führt FFmpeg je nach Stand unter versionierten Namen; welcher
+        # davon existiert, entscheidet die Abfrage.
+        "ffmpeg": ("ffmpeg-7", "ffmpeg-6", "ffmpeg-5", "ffmpeg-4", "ffmpeg"),
+        "ffprobe": ("ffmpeg-7", "ffmpeg-6", "ffmpeg-5", "ffmpeg-4", "ffmpeg"),
+        "cdparanoia": ("cdparanoia",),
+        "cd-info": ("libcdio-utils", "libcdio-tools", "libcdio"),
+        "lsdvd": ("lsdvd",),
+        "bd_info": ("libbluray-tools", "libbluray-utils", "libbluray"),
+        "libdvdcss": ("libdvdcss2", "libdvdcss"),
+        "libaacs": ("libaacs0", "libaacs"),
+        "libbdplus": ("libbdplus0", "libbdplus"),
     },
 }
 
@@ -206,8 +244,9 @@ class InstallPlan:
     # Komponenten, für die kein Paket auffindbar war (Namen, nicht übersetzbar).
     unresolved: List[str] = field(default_factory=list)
     needs_reboot: bool = False
-    # Fedora ohne RPM Fusion: eigener Hinweisdialog statt stillem Fehlschlag.
-    needs_rpmfusion: bool = False
+    # Fremdquelle nötig, die LME nicht eigenmächtig freischaltet:
+    # "" | "rpmfusion" (Fedora) | "packman" (openSUSE).
+    needs_extra_repo: str = ""
     # Arch: vorhandener AUR-Helfer, damit der Hinweis einen konkreten
     # Befehl nennen kann statt „nimm irgendeinen Helfer".
     aur_helper: Optional[str] = None
@@ -246,6 +285,15 @@ def package_exists(family: DistroFamily, package: str, runner: Callable = _run) 
     if family == DistroFamily.FEDORA:
         code, _ = runner(["dnf", "--quiet", "info", package])
         return code == 0
+    if family == DistroFamily.SUSE:
+        # 'zypper search --match-exact' meldet mit 104, wenn nichts passt.
+        # Zusätzlich gegen den Namen in der Ausgabe prüfen, damit ein
+        # abweichender Rückgabewert nicht als Treffer durchgeht.
+        code, out = runner([
+            "zypper", "--non-interactive", "--quiet",
+            "search", "--match-exact", package,
+        ])
+        return code == 0 and package in (out or "")
     return False
 
 
@@ -305,6 +353,11 @@ def build_install_command(
         # Unveränderliche Systeme kennen kein dnf install für das Grundsystem.
         base = (["rpm-ostree", "install", "-y", "--apply-live"]
                 if is_immutable else ["dnf", "install", "-y"])
+    elif family == DistroFamily.SUSE:
+        # MicroOS/Aeon schreiben in einen neuen Btrfs-Schnappschuss, der erst
+        # nach einem Neustart aktiv wird.
+        base = (["transactional-update", "--non-interactive", "pkg", "install"]
+                if is_immutable else ["zypper", "--non-interactive", "install"])
     else:
         return []
 
@@ -340,13 +393,17 @@ def plan_installation(
             plan.manual_notes.append(_FFMPEG_BUILD_OPTIONS[key])
             continue
 
-        if (key == "libdvdcss" and info.family == DistroFamily.FEDORA
-                and not rpmfusion_free_enabled(runner)):
-            # Ohne freigeschaltetes RPM Fusion gibt es das Paket gar nicht.
-            # Das ist kein Fehlschlag, sondern ein Schritt, den der Anwender
-            # bewusst gehen muss — LME schaltet keine Fremdquellen frei.
-            plan.needs_rpmfusion = True
-            continue
+        # libdvdcss liegt bei Fedora und openSUSE nicht in den Standardquellen.
+        # Ohne die jeweilige Fremdquelle gibt es das Paket gar nicht — das ist
+        # kein Fehlschlag, sondern ein Schritt, den der Anwender bewusst gehen
+        # muss. LME schaltet keine Fremdquellen eigenmächtig frei.
+        if key == "libdvdcss":
+            if info.family == DistroFamily.FEDORA and not rpmfusion_free_enabled(runner):
+                plan.needs_extra_repo = "rpmfusion"
+                continue
+            if info.family == DistroFamily.SUSE and not packman_enabled(runner):
+                plan.needs_extra_repo = "packman"
+                continue
 
         note = _MANUAL_NOTES.get((info.family, key))
         candidates = catalog.get(key, ())
@@ -431,6 +488,46 @@ def arch_package_repository(package: str, runner: Callable = _run) -> Optional[s
         if key.strip().lower() == "repository":
             return value.strip() or None
     return None
+
+
+def packman_enabled(
+    runner: Callable = _run,
+    repo_dir: str = "/etc/zypp/repos.d",
+) -> bool:
+    """Prüft, ob das Packman-Repository eingebunden ist.
+
+    Packman ist bei openSUSE das, was RPM Fusion bei Fedora ist: libdvdcss und
+    das vollständige FFmpeg liegen dort, nicht in den Standardquellen.
+    """
+    code, out = runner(["zypper", "--non-interactive", "--quiet", "lr"])
+    if code == 0 and out:
+        return any("packman" in line.lower() for line in out.splitlines())
+
+    try:
+        entries = sorted(os.listdir(repo_dir))
+    except OSError:
+        return False
+
+    parser = configparser.ConfigParser(strict=False, interpolation=None)
+    for entry in entries:
+        if not entry.endswith(".repo"):
+            continue
+        try:
+            parser.read(os.path.join(repo_dir, entry), encoding="utf-8")
+        except (OSError, configparser.Error):
+            continue
+
+    for section in parser.sections():
+        haystack = " ".join([
+            section,
+            parser.get(section, "name", fallback=""),
+            parser.get(section, "baseurl", fallback=""),
+        ]).lower()
+        if "packman" not in haystack:
+            continue
+        if parser.get(section, "enabled", fallback="1").strip() == "1":
+            return True
+    return False
 
 
 def rpmfusion_free_enabled(

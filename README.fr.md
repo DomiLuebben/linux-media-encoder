@@ -36,7 +36,9 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 > outils et bibliothèques facultatifs sont présents et propose un bouton « Installer les composants
 > manquants… ». La famille de distribution est déduite de `ID` et `ID_LIKE` dans `/etc/os-release`
 > (ce qui couvre aussi les dérivés comme CachyOS, EndeavourOS, Garuda, Linux Mint, TUXEDO OS,
-> Pop!_OS, Bazzite ou Nobara) et l’authentification passe par `pkexec`. La commande complète est
+> Pop!_OS, Bazzite, Nobara ou GeckoLinux) ; `pacman`, `apt`, `dnf` et `zypper` sont pris en charge,
+> tout comme les variantes immuables `rpm-ostree` (Bazzite, Silverblue, Kinoite) et
+> `transactional-update` (openSUSE MicroOS, Aeon). L’authentification passe par `pkexec`. La commande complète est
 > affichée avant exécution. Les paquets introuvables sur le système sont ignorés et signalés
 > individuellement plutôt que de faire échouer toute l’opération. LME n’active pas de sources
 > tierces (RPM Fusion, AUR) de lui-même. Sur Debian, Ubuntu et Mint, libdvdcss est compilé
@@ -45,6 +47,7 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 > Cela nécessite une connexion Internet et prend quelques minutes ; la progression s’affiche dans
 > le journal. Sur Fedora, LME vérifie si RPM Fusion (free) est configuré ; si ce n’est pas le
 > cas, un message invite à le configurer — les autres composants sont installés malgré tout.
+> Il en va de même pour **Packman** sur openSUSE, où se trouve libdvdcss.
 > Sur Arch, c’est `pacman -Si`, et donc l’état réel de la machine, qui détermine si un paquet
 > provient d’un dépôt configuré ou uniquement de l’AUR : CachyOS, EndeavourOS et Garuda
 > proposent beaucoup de paquets dans leurs propres dépôts, ce qui est reconnu comme tel. La

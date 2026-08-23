@@ -917,7 +917,7 @@ class DiscRipperDialog(QDialog):
         self._install_plan = plan
         # Auch dann anbieten, wenn es nur etwas zu erklaeren gibt (Fedora ohne
         # RPM Fusion) — sonst bekaeme der Anwender den Hinweis nie zu sehen.
-        actionable = plan.has_work or plan.needs_rpmfusion
+        actionable = plan.has_work or plan.needs_extra_repo
         self.btn_install_deps.setVisible(actionable)
         self.btn_install_deps.setEnabled(
             actionable
@@ -948,7 +948,7 @@ class DiscRipperDialog(QDialog):
         # Fedora ohne RPM Fusion: eigener Hinweis, bevor irgendetwas läuft.
         # LME schaltet keine Fremdquellen frei — das bleibt eine bewusste
         # Entscheidung des Anwenders.
-        if plan.needs_rpmfusion:
+        if plan.needs_extra_repo == "rpmfusion":
             QMessageBox.information(
                 self,
                 tr("RPM Fusion wird benötigt"),
@@ -959,6 +959,19 @@ class DiscRipperDialog(QDialog):
                     "eingerichtet ist.\n\n"
                     "Bitte RPM Fusion (free) einrichten und aktivieren, danach diesen Dialog "
                     "erneut öffnen. Die Anleitung steht auf rpmfusion.org.\n\n"
+                    "Alle übrigen Komponenten lassen sich unabhängig davon installieren."
+                ),
+            )
+        elif plan.needs_extra_repo == "packman":
+            QMessageBox.information(
+                self,
+                tr("Packman wird benötigt"),
+                tr(
+                    "Zum Lesen kopiergeschützter DVDs wird libdvdcss benötigt. Unter openSUSE "
+                    "liegt dieses Paket nicht in den Standardquellen, sondern im Repository "
+                    "Packman, das auf diesem System nicht eingebunden ist.\n\n"
+                    "Bitte Packman einbinden und aktivieren, danach diesen Dialog erneut "
+                    "öffnen. Die Anleitung steht auf packman.links2linux.de.\n\n"
                     "Alle übrigen Komponenten lassen sich unabhängig davon installieren."
                 ),
             )

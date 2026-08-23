@@ -44,7 +44,10 @@ geschrieben in Python 3 mit PyQt6.
 > optionalen Werkzeuge und Bibliotheken auf dem System vorhanden sind, und bietet eine
 > Schaltfläche „Fehlende Komponenten installieren…“ an. Die Distributionsfamilie wird aus `ID`
 > und `ID_LIKE` in `/etc/os-release` abgeleitet (deckt damit auch Ableger wie CachyOS,
-> EndeavourOS, Garuda, Linux Mint, TUXEDO OS, Pop!_OS, Bazzite oder Nobara ab), die
+> EndeavourOS, Garuda, Linux Mint, TUXEDO OS, Pop!_OS, Bazzite, Nobara oder GeckoLinux ab);
+> unterstützt werden `pacman`, `apt`, `dnf` und `zypper` sowie die unveränderlichen Bauarten
+> `rpm-ostree` (Bazzite, Silverblue, Kinoite) und `transactional-update` (openSUSE MicroOS, Aeon).
+> Die
 > Kennwortabfrage läuft grafisch über `pkexec`. Vor dem Ausführen wird der vollständige Befehl
 > angezeigt. Pakete, die auf dem System nicht auffindbar sind, werden übersprungen und einzeln
 > benannt, statt den ganzen Lauf scheitern zu lassen. Fremdquellen (RPM Fusion, AUR) schaltet
@@ -54,6 +57,7 @@ geschrieben in Python 3 mit PyQt6.
 > Internetverbindung und dauert einige Minuten; der Fortschritt steht im Protokoll.
 > Unter Fedora prüft LME, ob RPM Fusion (free) eingerichtet ist; ist es das nicht, erscheint ein
 > Hinweis mit der Bitte, es einzurichten — die übrigen Komponenten werden trotzdem installiert.
+> Unter openSUSE gilt dasselbe für **Packman**, wo dort libdvdcss liegt.
 > Unter Arch entscheidet `pacman -Si` und damit die tatsächliche Lage auf dem Rechner, ob ein
 > Paket aus einer eingerichteten Quelle kommt oder nur im AUR liegt: CachyOS, EndeavourOS oder
 > Garuda führen vieles in eigenen Quellen, und das wird so auch erkannt. Der Bestätigungsdialog
