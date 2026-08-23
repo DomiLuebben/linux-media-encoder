@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from i18n import (
     QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox, QLabel,
     QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QRadioButton,
-    QTableWidget, QTableWidgetItem, QTextEdit, QWidget, tr,
+    QTableWidget, QTableWidgetItem, QTextEdit, QWidget, LocalizedString, tr,
 )
 
 import optical_media
@@ -68,6 +68,7 @@ class DiscRipperDialog(QDialog):
         self.current_video_job_idx: int = -1
 
         self._init_ui()
+        self._update_environment_notice()
         self._refresh_drives()
 
         if initial_source:
@@ -127,6 +128,15 @@ class DiscRipperDialog(QDialog):
         info_layout.addWidget(self.lbl_disc_info, 1)
 
         main_layout.addWidget(self.info_banner)
+
+        # Dauerhafte Systemprüfung: sichtbar, sobald der Dialog aufgeht, also
+        # auch ohne eingelegtes Medium. Der Tooltip führt jede Komponente
+        # einzeln mit Zweck und Zustand auf.
+        self.lbl_env_notice = QLabel("")
+        self.lbl_env_notice.setStyleSheet("color: #ffaa00; font-style: italic;")
+        self.lbl_env_notice.setVisible(False)
+        self.lbl_env_notice.setWordWrap(True)
+        main_layout.addWidget(self.lbl_env_notice)
 
         self.lbl_warn_encryption = QLabel("")
         self.lbl_warn_encryption.setStyleSheet("color: #ffaa00; font-style: italic;")
@@ -435,7 +445,18 @@ class DiscRipperDialog(QDialog):
             self.lbl_disc_info.setText(tr("Daten-Disc oder unbekannte Struktur."))
             self.table_titles.setRowCount(0)
 
-        self.btn_action.setEnabled(self.table_titles.rowCount() > 0 or self.radio_mode_iso.isChecked())
+        # Zwingend benötigte Komponenten für genau diese Quellart: fehlt eine,
+        # wird die Aktion gesperrt statt erst beim Rippen zu scheitern.
+        blocking = optical_media.missing_optical_components(res.disc_type, blocking_only=True)
+        if blocking:
+            self.lbl_warn_encryption.setText(tr(
+                "Für diese Quelle fehlt eine zwingend benötigte Komponente: {names}",
+                names=", ".join(component.name for component in blocking),
+            ))
+            self.lbl_warn_encryption.setVisible(True)
+            self.btn_action.setEnabled(False)
+        else:
+            self.btn_action.setEnabled(self.table_titles.rowCount() > 0 or self.radio_mode_iso.isChecked())
         self.lbl_status.setText(tr("Bereit"))
 
     def _populate_audio_cd_table(self, tracks: List[AudioTrackInfo]):
@@ -850,6 +871,48 @@ class DiscRipperDialog(QDialog):
         self.active_worker.status_changed.connect(self._on_worker_status)
         self.active_worker.finished.connect(self._on_direct_rip_finished)
         self.active_worker.start()
+
+    def _update_environment_notice(self):
+        """Meldet dauerhaft, welche externen Komponenten auf dem System fehlen.
+
+        Läuft beim Öffnen des Dialogs — also auch ohne eingelegtes Medium, denn
+        genau dann will man wissen, dass z. B. cdparanoia fehlt.
+        """
+        components = optical_media.check_optical_environment()
+
+        tooltip_lines = [tr("Systemprüfung optischer Medien")]
+        for component in components:
+            mark = "✓" if component.available else "✗"
+            tooltip_lines.append(f"{mark}  {component.name} — {tr(component.purpose)}")
+            # 'detail' enthält Pfade und Laufzeitangaben und wird bewusst nicht
+            # durch tr() geschickt.
+            if not component.available and component.detail:
+                tooltip_lines.append(f"      {component.detail}")
+        # Der Tooltip ist aus bereits übersetzten Teilen zusammengesetzt; als
+        # LocalizedString markiert, damit i18n ihn nicht ein zweites Mal
+        # nachschlägt und als fehlenden Schlüssel meldet.
+        tooltip = "\n".join(tooltip_lines)
+        self.lbl_env_notice.setToolTip(LocalizedString(tooltip, tooltip))
+
+        missing = [component for component in components if not component.available]
+        if not missing:
+            self.lbl_env_notice.setVisible(False)
+            return
+
+        names = ", ".join(component.name for component in missing)
+        if any(component.is_blocking for component in missing):
+            text = tr(
+                "Es fehlen Komponenten, ohne die einzelne Medienarten gar nicht gelesen "
+                "werden können: {names}. Einzelheiten im Tooltip.",
+                names=names,
+            )
+        else:
+            text = tr(
+                "Optionale Komponenten fehlen: {names}. Einzelheiten im Tooltip.",
+                names=names,
+            )
+        self.lbl_env_notice.setText(text)
+        self.lbl_env_notice.setVisible(True)
 
     def _on_worker_progress(self, pct: float, speed: str, eta: str):
         self.prog_bar.setValue(int(pct))

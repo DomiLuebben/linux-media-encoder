@@ -35,6 +35,8 @@ from optical_media import (
     find_aacs_keydb,
     aacs_keydb_search_paths,
     check_ffmpeg_optical_capabilities,
+    check_optical_environment,
+    missing_optical_components,
 )
 
 
@@ -340,6 +342,39 @@ class OpticalMediaCoreTest(unittest.TestCase):
             with open(leer, "wb") as handle:
                 handle.write(b"\x00" * 4096)
             self.assertEqual(get_optical_media_size(leer), 0)
+
+    def test_environment_report_marks_blocking_components(self):
+        # Weder Hardware noch echte Programme anfassen: alles ausser cdparanoia
+        # und lsdvd als vorhanden melden.
+        def fake_which(name):
+            return None if name in ("cdparanoia", "lsdvd") else f"/usr/bin/{name}"
+
+        with patch("optical_media.shutil.which", side_effect=fake_which), \
+             patch("optical_media.check_ffmpeg_optical_capabilities",
+                   return_value={"dvdvideo": True, "bluray": True}), \
+             patch("optical_media.check_dvd_encryption_support", return_value=(True, "")), \
+             patch("optical_media.check_bluray_encryption_support", return_value=(True, "")), \
+             patch("optical_media.ctypes.util.find_library", return_value="libbdplus.so.0"):
+
+            by_key = {c.key: c for c in check_optical_environment()}
+            self.assertTrue(by_key["ffmpeg"].available)
+            self.assertFalse(by_key["cdparanoia"].available)
+            self.assertFalse(by_key["lsdvd"].available)
+
+            # cdparanoia ist fuer Audio-CDs zwingend, lsdvd nur bequem.
+            self.assertTrue(by_key["cdparanoia"].is_blocking)
+            self.assertFalse(by_key["lsdvd"].is_blocking)
+
+            missing_keys = {c.key for c in missing_optical_components()}
+            self.assertEqual(missing_keys, {"cdparanoia", "lsdvd"})
+
+            audio_blockers = missing_optical_components(DiscType.AUDIO_CD, blocking_only=True)
+            self.assertEqual([c.key for c in audio_blockers], ["cdparanoia"])
+
+            # Fuer eine DVD blockiert das fehlende cdparanoia nichts.
+            self.assertEqual(
+                missing_optical_components(DiscType.DVD_VIDEO, blocking_only=True), []
+            )
 
     def test_detect_disc_type_folder_structures(self):
         with tempfile.TemporaryDirectory() as tmpdir:

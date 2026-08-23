@@ -12,6 +12,7 @@ import ctypes.util
 import json
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
@@ -1270,6 +1271,135 @@ def check_ffmpeg_optical_capabilities() -> dict[str, bool]:
         pass
 
     return caps
+
+
+@dataclass
+class OpticalComponent:
+    """Eine externe Voraussetzung des Ripper-Bereichs und ihr Zustand.
+
+    'blocking_for' nennt die Quellarten, die OHNE diese Komponente gar nicht
+    gehen; alles andere ist eine Komfort- oder Entschlüsselungszutat.
+    """
+    key: str
+    name: str
+    available: bool
+    purpose: str
+    blocking_for: Tuple[DiscType, ...] = ()
+    detail: str = ""
+
+    @property
+    def is_blocking(self) -> bool:
+        return bool(self.blocking_for) and not self.available
+
+
+def check_optical_environment() -> List[OpticalComponent]:
+    """Erhebt den Zustand aller externen Voraussetzungen des Rippers.
+
+    Bewusst eine reine Bestandsaufnahme ohne Nebenwirkungen: die Oberfläche
+    entscheidet, was davon sie zeigt und was eine Aktion sperrt.
+    """
+    caps = check_ffmpeg_optical_capabilities()
+    has_dvdcss, dvdcss_detail = check_dvd_encryption_support()
+    has_aacs, aacs_detail = check_bluray_encryption_support()
+
+    return [
+        OpticalComponent(
+            key="ffmpeg",
+            name="ffmpeg",
+            available=bool(shutil.which("ffmpeg")),
+            purpose="Grundlage für alle Rip- und Konvertierungsvorgänge",
+            blocking_for=(DiscType.AUDIO_CD, DiscType.DVD_VIDEO, DiscType.BLURAY),
+        ),
+        OpticalComponent(
+            key="ffprobe",
+            name="ffprobe",
+            available=bool(shutil.which("ffprobe")),
+            purpose="Auslesen von Titeln, Spuren und Kapiteln",
+            blocking_for=(DiscType.DVD_VIDEO, DiscType.BLURAY),
+        ),
+        OpticalComponent(
+            key="dvdvideo",
+            name="ffmpeg: dvdvideo-Demuxer",
+            available=bool(caps.get("dvdvideo")),
+            purpose="DVD-Video einlesen (FFmpeg mit libdvdnav/libdvdread gebaut)",
+            blocking_for=(DiscType.DVD_VIDEO,),
+        ),
+        OpticalComponent(
+            key="bluray",
+            name="ffmpeg: bluray-Protokoll",
+            available=bool(caps.get("bluray")),
+            purpose="Blu-ray einlesen (FFmpeg mit libbluray gebaut)",
+            blocking_for=(DiscType.BLURAY,),
+        ),
+        OpticalComponent(
+            key="cdparanoia",
+            name="cdparanoia",
+            available=bool(shutil.which("cdparanoia")),
+            purpose="Audio-CDs auslesen (FFmpeg kann CDDA nicht selbst lesen)",
+            blocking_for=(DiscType.AUDIO_CD,),
+        ),
+        OpticalComponent(
+            key="dd",
+            name="dd",
+            available=bool(shutil.which("dd")),
+            purpose="1:1 ISO-Abbild eines Datenträgers erstellen",
+        ),
+        OpticalComponent(
+            key="cd-info",
+            name="cd-info",
+            available=bool(shutil.which("cd-info")),
+            purpose="CD-Text als Titel- und Interpretenangabe (aus libcdio)",
+        ),
+        OpticalComponent(
+            key="lsdvd",
+            name="lsdvd",
+            available=bool(shutil.which("lsdvd")),
+            purpose="genaue DVD-Titel- und Kapitelangaben; ohne lsdvd greift ein langsamerer ffprobe-Weg",
+        ),
+        OpticalComponent(
+            key="bd_info",
+            name="bd_info",
+            available=bool(shutil.which("bd_info")),
+            purpose="Datenträgername und Kopierschutz-Zustand einer Blu-ray (aus libbluray)",
+        ),
+        OpticalComponent(
+            key="libdvdcss",
+            name="libdvdcss",
+            available=has_dvdcss,
+            purpose="kopiergeschützte (CSS-)DVDs lesen",
+            detail=dvdcss_detail,
+        ),
+        OpticalComponent(
+            key="libaacs",
+            name="libaacs + KEYDB.cfg",
+            available=has_aacs,
+            purpose="AACS-geschützte Blu-rays lesen",
+            detail=aacs_detail,
+        ),
+        OpticalComponent(
+            key="libbdplus",
+            name="libbdplus",
+            available=bool(ctypes.util.find_library("bdplus")),
+            purpose="zusätzlich BD+-geschützte Blu-rays lesen",
+        ),
+    ]
+
+
+def missing_optical_components(
+    disc_type: Optional[DiscType] = None,
+    blocking_only: bool = False,
+) -> List[OpticalComponent]:
+    """Fehlende Komponenten, optional auf eine Quellart eingegrenzt."""
+    result = []
+    for component in check_optical_environment():
+        if component.available:
+            continue
+        if blocking_only and not component.is_blocking:
+            continue
+        if disc_type is not None and blocking_only and disc_type not in component.blocking_for:
+            continue
+        result.append(component)
+    return result
 
 
 def _resolve_language_name(langcode: str) -> str:
