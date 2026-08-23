@@ -549,10 +549,12 @@ class DiscRipperDialog(QDialog):
             self.table_titles.setItem(row, 1, num_item)
 
             # Name (editierbar)
+            # Der Titelname kommt von der Disc; nur das Anhaengsel ist ein
+            # uebersetzbarer Text. Das Ergebnis ist damit fertig gerendert.
             display_name = t.name
             if t.is_main_feature:
-                display_name += tr(" [Hauptfilm]")
-            name_item = QTableWidgetItem(display_name)
+                display_name += str(tr(" [Hauptfilm]"))
+            name_item = QTableWidgetItem(LocalizedString(display_name, display_name))
             self.table_titles.setItem(row, 2, name_item)
 
             # Dauer
@@ -567,8 +569,11 @@ class DiscRipperDialog(QDialog):
             self.table_titles.setItem(row, 4, chap_item)
 
             # Video Format
+            # Aus Disc-Daten zusammengesetzt — als fertig gerendert markieren,
+            # sonst sucht i18n dafuer einen Uebersetzungsschluessel und meldet
+            # ihn als fehlend (faellt nur mit echtem Medium auf).
             v_text = f"{t.video_codec.upper()} {t.width}x{t.height} ({t.aspect_ratio})"
-            v_item = QTableWidgetItem(v_text)
+            v_item = QTableWidgetItem(LocalizedString(v_text, v_text))
             v_item.setFlags(v_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table_titles.setItem(row, 5, v_item)
 
@@ -576,7 +581,8 @@ class DiscRipperDialog(QDialog):
             combo_audio = QComboBox()
             if t.audio_streams:
                 for a in t.audio_streams:
-                    combo_audio.addItem(a.display_text(), a.stream_idx)
+                    a_text = a.display_text()
+                    combo_audio.addItem(LocalizedString(a_text, a_text), a.stream_idx)
                 combo_audio.addItem(tr("Alle Audiospuren"), -1)
             else:
                 combo_audio.addItem(tr("Standard-Spur"), None)
@@ -587,7 +593,8 @@ class DiscRipperDialog(QDialog):
             combo_sub.addItem(tr("Keine Untertitel"), None)
             if t.subtitle_streams:
                 for s in t.subtitle_streams:
-                    combo_sub.addItem(s.display_text(), s.stream_idx)
+                    s_text = s.display_text()
+                    combo_sub.addItem(LocalizedString(s_text, s_text), s.stream_idx)
                 combo_sub.addItem(tr("Alle Untertitel"), -1)
             self.table_titles.setCellWidget(row, 7, combo_sub)
 
@@ -754,7 +761,13 @@ class DiscRipperDialog(QDialog):
             QMessageBox.information(
                 self,
                 tr("Warteschlange aktualisiert"),
-                tr("{count} Job(s) erfolgreich zur Warteschlange hinzugefügt.", count=len(jobs_to_queue))
+                tr(
+                    "{count} Job(s) wurden in die Warteschlange eingereiht.\n\n"
+                    "Es wurde noch nichts gerippt: Die Verarbeitung startet erst mit "
+                    "„Start\" im Hauptfenster. Wer sofort und verlustfrei rippen möchte, "
+                    "wählt im Ripper stattdessen „Direkt rippen (Verlustfrei / Remux)\".",
+                    count=len(jobs_to_queue),
+                )
             )
             self.accept()
 
@@ -825,11 +838,35 @@ class DiscRipperDialog(QDialog):
                     )
                 self.pending_video_jobs.append((args, final_out, safe_name))
 
+            # Fix: eine leere Liste hat frueher sofort Erfolg gemeldet.
+            if not self.pending_video_jobs:
+                self._on_direct_rip_finished(
+                    False,
+                    tr("Es wurde kein Titel zum Rippen vorbereitet."),
+                )
+                return
+
             self.current_video_job_idx = 0
             self._run_next_video_job()
 
+        else:
+            # Fix: ohne diesen Zweig blieb der Dialog bei Daten-Discs und
+            # unbekannten Medien stumm im Zustand "rippt gerade" stehen --
+            # kein Fehler, kein Ende, nichts.
+            self._on_direct_rip_finished(
+                False,
+                tr("Diese Medienart kann nicht gerippt werden."),
+            )
+
     def _run_next_video_job(self):
         if self.current_video_job_idx >= len(self.pending_video_jobs):
+            # Fix: bei leerer Liste war das eine Erfolgsmeldung fuer nichts.
+            if not self.pending_video_jobs:
+                self._on_direct_rip_finished(
+                    False,
+                    tr("Es wurde kein Titel zum Rippen vorbereitet."),
+                )
+                return
             self._on_direct_rip_finished(True, tr("Alle ausgewählten Titel erfolgreich verlustfrei gerippt."))
             return
 
@@ -977,6 +1014,23 @@ class DiscRipperDialog(QDialog):
             )
 
         if not plan.has_work:
+            return
+
+        # Haengt oder laeuft parallel eine Paketverwaltung, scheitert die
+        # Installation sofort -- mit einer Meldung, die niemand einordnen kann.
+        lock_path = dependency_installer.package_manager_lock(plan.family)
+        if lock_path:
+            QMessageBox.warning(
+                self,
+                tr("Paketverwaltung ist belegt"),
+                tr(
+                    "Es läuft bereits eine Paketverwaltung, oder ein abgebrochener Vorgang "
+                    "hält die Sperrdatei {path}.\n\n"
+                    "Bitte den laufenden Vorgang beenden (etwa eine offene Aktualisierung "
+                    "oder ein Software-Verwaltungsprogramm) und es danach erneut versuchen.",
+                    path=lock_path,
+                ),
+            )
             return
 
         if not dependency_installer.graphical_sudo_available():

@@ -139,9 +139,15 @@ class LocalizedWidgetTest(unittest.TestCase):
             dialog._install_plan = plan
             clear_missing_translations()
 
+            # QMessageBox.warning MUSS mitgefangen werden: haelt der
+            # Paketverwalter des Testrechners gerade eine Sperrdatei, oeffnet
+            # der Sperr-Hinweis sonst einen echten modalen Dialog und der Test
+            # bleibt haengen.
             with patch("disc_ripper_dialog.QMessageBox.question",
                        return_value=QtWidgets.QMessageBox.StandardButton.Cancel) as ask, \
-                 patch("disc_ripper_dialog.QMessageBox.information") as info:
+                 patch("disc_ripper_dialog.QMessageBox.information") as info, \
+                 patch("disc_ripper_dialog.QMessageBox.warning"), \
+                 patch("dependency_installer.package_manager_lock", return_value=None):
                 dialog._on_install_dependencies_clicked()
                 self.assertTrue(ask.called)
                 # Der RPM-Fusion-Hinweis muss vorher erscheinen.

@@ -24,6 +24,7 @@ from dependency_installer import (
     plan_installation,
     rpmfusion_free_enabled,
     packman_enabled,
+    package_manager_lock,
     arch_package_repository,
     find_aur_helper,
     AUR_ONLY_NOTE,
@@ -298,6 +299,27 @@ class PackmanTest(unittest.TestCase):
                 handle.write("[meine-multimedia-quelle]\nname=Multimedia\n"
                              "baseurl=https://ftp.gwdg.de/pub/linux/misc/packman/suse/\nenabled=1\n")
             self.assertTrue(packman_enabled(lambda cmd, timeout=60: (127, ""), tmpdir))
+
+
+class PackageManagerLockTest(unittest.TestCase):
+
+    def test_existing_lock_file_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock = os.path.join(tmpdir, "db.lck")
+            table = {DistroFamily.ARCH: (lock,)}
+
+            self.assertIsNone(package_manager_lock(DistroFamily.ARCH, table))
+            with open(lock, "w") as handle:
+                handle.write("")
+            self.assertEqual(package_manager_lock(DistroFamily.ARCH, table), lock)
+
+    def test_families_with_permanent_lock_files_are_not_checked(self):
+        # apt/dpkg und dnf legen ihre Sperrdateien dauerhaft an und sperren sie
+        # per flock. Eine Existenzpruefung waere dort Dauer-Fehlalarm, deshalb
+        # steht fuer sie bewusst kein Eintrag in der Tabelle.
+        self.assertIsNone(package_manager_lock(DistroFamily.DEBIAN))
+        self.assertIsNone(package_manager_lock(DistroFamily.FEDORA))
+        self.assertIsNone(package_manager_lock(DistroFamily.UNKNOWN))
 
 
 class InstallPlanTest(unittest.TestCase):

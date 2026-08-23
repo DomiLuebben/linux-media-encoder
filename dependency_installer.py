@@ -569,6 +569,33 @@ def rpmfusion_free_enabled(
     return False
 
 
+# Sperrdateien, deren blosses Vorhandensein tatsächlich „gerade beschäftigt"
+# bedeutet. Bewusst NUR diese beiden: apt/dpkg und dnf legen ihre Sperrdateien
+# dauerhaft an und sperren sie per flock — dort wäre eine Existenzprüfung ein
+# ständiger Fehlalarm.
+_PACKAGE_MANAGER_LOCKS: Dict[DistroFamily, Tuple[str, ...]] = {
+    DistroFamily.ARCH: ("/var/lib/pacman/db.lck",),
+    DistroFamily.SUSE: ("/run/zypp.pid",),
+}
+
+
+def package_manager_lock(
+    family: DistroFamily,
+    locks: Optional[Dict[DistroFamily, Tuple[str, ...]]] = None,
+) -> Optional[str]:
+    """Pfad einer vorhandenen Sperrdatei des Paketverwalters (oder None).
+
+    Läuft parallel eine Aktualisierung — oder hängt eine abgebrochene —, dann
+    scheitert jede Installation sofort mit „could not lock database". Ohne
+    diese Vorprüfung stünde im Dialog nur ein nackter Rückgabewert.
+    """
+    table = locks if locks is not None else _PACKAGE_MANAGER_LOCKS
+    for path in table.get(family, ()):
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def command_for_display(command: Sequence[str]) -> str:
     """Lesbare Fassung des Befehls für die Bestätigung.
 
