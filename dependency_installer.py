@@ -17,6 +17,7 @@ liegt unter Arch zum Beispiel nur im AUR.
 
 from __future__ import annotations
 
+import configparser
 import os
 import shlex
 import shutil
@@ -181,9 +182,6 @@ _MANUAL_NOTES: Dict[Tuple[DistroFamily, str], str] = {
     (DistroFamily.ARCH, "libbdplus"):
         "libbdplus liegt bei Arch und seinen Ablegern nur im AUR. LME baut keine "
         "AUR-Pakete; bitte mit einem AUR-Helfer nachinstallieren.",
-    (DistroFamily.FEDORA, "libdvdcss"):
-        "Unter Fedora liegt libdvdcss im RPM-Fusion-Repository. LME schaltet keine "
-        "Fremdquellen eigenmächtig frei — bitte RPM Fusion (free) zuerst einrichten.",
 }
 
 
@@ -202,6 +200,8 @@ class InstallPlan:
     # Komponenten, für die kein Paket auffindbar war (Namen, nicht übersetzbar).
     unresolved: List[str] = field(default_factory=list)
     needs_reboot: bool = False
+    # Fedora ohne RPM Fusion: eigener Hinweisdialog statt stillem Fehlschlag.
+    needs_rpmfusion: bool = False
 
     @property
     def has_work(self) -> bool:
@@ -328,6 +328,14 @@ def plan_installation(
             plan.manual_notes.append(_FFMPEG_BUILD_OPTIONS[key])
             continue
 
+        if (key == "libdvdcss" and info.family == DistroFamily.FEDORA
+                and not rpmfusion_free_enabled(runner)):
+            # Ohne freigeschaltetes RPM Fusion gibt es das Paket gar nicht.
+            # Das ist kein Fehlschlag, sondern ein Schritt, den der Anwender
+            # bewusst gehen muss — LME schaltet keine Fremdquellen frei.
+            plan.needs_rpmfusion = True
+            continue
+
         note = _MANUAL_NOTES.get((info.family, key))
         candidates = catalog.get(key, ())
         resolved = next(
@@ -365,6 +373,45 @@ def plan_installation(
     plan.command = build_install_command(info.family, chosen, info.is_immutable)
     plan.needs_reboot = bool(chosen) and info.is_immutable
     return plan
+
+
+def rpmfusion_free_enabled(
+    runner: Callable = _run,
+    repo_dir: str = "/etc/yum.repos.d",
+) -> bool:
+    """Prüft, ob das RPM-Fusion-Repository (free) aktiv ist.
+
+    Erst über `dnf repolist --enabled`; schlägt das fehl (auf rpm-ostree-Systemen
+    ist dnf nicht immer benutzbar), werden die .repo-Dateien gelesen. Fehlt der
+    Schlüssel `enabled`, gilt ein Repository als aktiv — so hält es dnf auch.
+    """
+    code, out = runner(["dnf", "repolist", "--enabled"])
+    if code == 0 and out:
+        for line in out.splitlines():
+            if line.strip().lower().startswith("rpmfusion-free"):
+                return True
+        return False
+
+    try:
+        entries = sorted(os.listdir(repo_dir))
+    except OSError:
+        return False
+
+    parser = configparser.ConfigParser(strict=False, interpolation=None)
+    for entry in entries:
+        if not entry.endswith(".repo"):
+            continue
+        try:
+            parser.read(os.path.join(repo_dir, entry), encoding="utf-8")
+        except (OSError, configparser.Error):
+            continue
+
+    for section in parser.sections():
+        if not section.lower().startswith("rpmfusion-free"):
+            continue
+        if parser.get(section, "enabled", fallback="1").strip() == "1":
+            return True
+    return False
 
 
 def command_for_display(command: Sequence[str]) -> str:

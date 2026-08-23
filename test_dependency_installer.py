@@ -21,6 +21,7 @@ from dependency_installer import (
     package_exists,
     parse_os_release,
     plan_installation,
+    rpmfusion_free_enabled,
 )
 
 
@@ -159,6 +160,39 @@ class PackageResolutionTest(unittest.TestCase):
         self.assertFalse(package_exists(DistroFamily.FEDORA, "weg", runner))
 
 
+class RpmFusionTest(unittest.TestCase):
+
+    def test_dnf_repolist_decides_when_it_works(self):
+        aktiv = "repo id            repo name\nfedora             Fedora 42\nrpmfusion-free     RPM Fusion Free\n"
+        ohne = "repo id            repo name\nfedora             Fedora 42\n"
+        self.assertTrue(rpmfusion_free_enabled(lambda cmd, timeout=60: (0, aktiv)))
+        self.assertFalse(rpmfusion_free_enabled(lambda cmd, timeout=60: (0, ohne)))
+
+    def test_repo_files_are_the_fallback_when_dnf_is_unusable(self):
+        # Auf rpm-ostree-Systemen ist dnf nicht immer benutzbar.
+        def kaputtes_dnf(cmd, timeout=60):
+            return 127, ""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertFalse(rpmfusion_free_enabled(kaputtes_dnf, tmpdir))
+
+            pfad = os.path.join(tmpdir, "rpmfusion-free.repo")
+            with open(pfad, "w", encoding="utf-8") as handle:
+                handle.write("[rpmfusion-free]\nname=RPM Fusion Free\nenabled=0\n")
+            self.assertFalse(rpmfusion_free_enabled(kaputtes_dnf, tmpdir))
+
+            with open(pfad, "w", encoding="utf-8") as handle:
+                handle.write("[rpmfusion-free]\nname=RPM Fusion Free\nenabled=1\n")
+            self.assertTrue(rpmfusion_free_enabled(kaputtes_dnf, tmpdir))
+
+    def test_missing_enabled_key_counts_as_enabled(self):
+        # dnf behandelt ein Repository ohne 'enabled' als aktiv.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "rf.repo"), "w", encoding="utf-8") as handle:
+                handle.write("[rpmfusion-free-updates]\nname=RPM Fusion Free Updates\n")
+            self.assertTrue(rpmfusion_free_enabled(lambda cmd, timeout=60: (127, ""), tmpdir))
+
+
 class InstallPlanTest(unittest.TestCase):
 
     def _arch(self, immutable=False):
@@ -198,6 +232,31 @@ class InstallPlanTest(unittest.TestCase):
         self.assertEqual(plan.packages, [])
         self.assertEqual(plan.command, [])
         self.assertEqual(len(plan.manual_notes), 1)
+
+    def test_fedora_without_rpmfusion_asks_instead_of_failing(self):
+        # libdvdcss gibt es ohne RPM Fusion gar nicht. Es darf weder still
+        # verschwinden noch den restlichen Lauf verhindern.
+        def runner(cmd, timeout=60):
+            if cmd[:2] == ["dnf", "repolist"]:
+                return 0, "repo id\nfedora  Fedora 42\n"
+            return 0, ""
+
+        info = DistroInfo(family=DistroFamily.FEDORA, pretty_name="Fedora 42")
+        plan = plan_installation(["libdvdcss", "lsdvd"], info, runner)
+        self.assertTrue(plan.needs_rpmfusion)
+        self.assertEqual(plan.packages, ["lsdvd"])
+        self.assertNotIn("libdvdcss", plan.unresolved)
+
+    def test_fedora_with_rpmfusion_installs_libdvdcss_normally(self):
+        def runner(cmd, timeout=60):
+            if cmd[:2] == ["dnf", "repolist"]:
+                return 0, "repo id\nrpmfusion-free  RPM Fusion Free\n"
+            return 0, ""
+
+        info = DistroInfo(family=DistroFamily.FEDORA, pretty_name="Fedora 42")
+        plan = plan_installation(["libdvdcss"], info, runner)
+        self.assertFalse(plan.needs_rpmfusion)
+        self.assertEqual(plan.packages, ["libdvdcss"])
 
     def test_immutable_system_flags_reboot(self):
         info = DistroInfo(family=DistroFamily.FEDORA, pretty_name="Bazzite", is_immutable=True)

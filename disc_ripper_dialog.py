@@ -915,9 +915,13 @@ class DiscRipperDialog(QDialog):
         # Der Knopf erscheint nur, wenn wirklich etwas automatisch zu holen ist.
         plan = dependency_installer.plan_installation([c.key for c in missing])
         self._install_plan = plan
-        self.btn_install_deps.setVisible(plan.has_work)
+        # Auch dann anbieten, wenn es nur etwas zu erklaeren gibt (Fedora ohne
+        # RPM Fusion) — sonst bekaeme der Anwender den Hinweis nie zu sehen.
+        actionable = plan.has_work or plan.needs_rpmfusion
+        self.btn_install_deps.setVisible(actionable)
         self.btn_install_deps.setEnabled(
-            plan.has_work and dependency_installer.graphical_sudo_available()
+            actionable
+            and (dependency_installer.graphical_sudo_available() or not plan.has_work)
         )
 
         names = ", ".join(component.name for component in missing)
@@ -938,7 +942,28 @@ class DiscRipperDialog(QDialog):
     def _on_install_dependencies_clicked(self):
         """Installiert die fehlenden Komponenten mit grafischer Kennwortabfrage."""
         plan = getattr(self, "_install_plan", None)
-        if plan is None or not plan.has_work:
+        if plan is None:
+            return
+
+        # Fedora ohne RPM Fusion: eigener Hinweis, bevor irgendetwas läuft.
+        # LME schaltet keine Fremdquellen frei — das bleibt eine bewusste
+        # Entscheidung des Anwenders.
+        if plan.needs_rpmfusion:
+            QMessageBox.information(
+                self,
+                tr("RPM Fusion wird benötigt"),
+                tr(
+                    "Zum Lesen kopiergeschützter DVDs wird libdvdcss benötigt. Unter Fedora "
+                    "und verwandten Systemen liegt dieses Paket nicht in den Standardquellen, "
+                    "sondern im Repository RPM Fusion (free), das auf diesem System nicht "
+                    "eingerichtet ist.\n\n"
+                    "Bitte RPM Fusion (free) einrichten und aktivieren, danach diesen Dialog "
+                    "erneut öffnen. Die Anleitung steht auf rpmfusion.org.\n\n"
+                    "Alle übrigen Komponenten lassen sich unabhängig davon installieren."
+                ),
+            )
+
+        if not plan.has_work:
             return
 
         if not dependency_installer.graphical_sudo_available():

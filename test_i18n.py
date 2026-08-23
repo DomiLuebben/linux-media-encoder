@@ -124,6 +124,7 @@ class LocalizedWidgetTest(unittest.TestCase):
             ],
             unresolved=["libbdplus"],
             needs_reboot=True,
+            needs_rpmfusion=True,
         )
 
         for loc in ("en_US", "fr_FR"):
@@ -133,9 +134,12 @@ class LocalizedWidgetTest(unittest.TestCase):
             clear_missing_translations()
 
             with patch("disc_ripper_dialog.QMessageBox.question",
-                       return_value=QtWidgets.QMessageBox.StandardButton.Cancel) as ask:
+                       return_value=QtWidgets.QMessageBox.StandardButton.Cancel) as ask, \
+                 patch("disc_ripper_dialog.QMessageBox.information") as info:
                 dialog._on_install_dependencies_clicked()
                 self.assertTrue(ask.called)
+                # Der RPM-Fusion-Hinweis muss vorher erscheinen.
+                self.assertTrue(info.called)
 
             self.assertEqual(
                 missing_translations(),

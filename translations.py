@@ -381,6 +381,8 @@ EN_US = {
     "Die Distribution konnte nicht zugeordnet werden. Bitte die fehlenden Komponenten über den Paketverwalter des Systems nachinstallieren.": "The distribution could not be identified. Please install the missing components using your system's package manager.",
     "Bitte beachten:": "Please note:",
     "libdvdcss wird bei Debian und Ubuntu über libdvd-pkg aus dem Quelltext gebaut. Das geschieht im selben Arbeitsgang, braucht eine Internetverbindung und kann einige Minuten dauern; der Fortschritt steht im Protokoll.": "On Debian and Ubuntu, libdvdcss is built from source via libdvd-pkg. This happens in the same run, requires an internet connection and can take a few minutes; progress is shown in the log.",
+    "RPM Fusion wird benötigt": "RPM Fusion is required",
+    "Zum Lesen kopiergeschützter DVDs wird libdvdcss benötigt. Unter Fedora und verwandten Systemen liegt dieses Paket nicht in den Standardquellen, sondern im Repository RPM Fusion (free), das auf diesem System nicht eingerichtet ist.\n\nBitte RPM Fusion (free) einrichten und aktivieren, danach diesen Dialog erneut öffnen. Die Anleitung steht auf rpmfusion.org.\n\nAlle übrigen Komponenten lassen sich unabhängig davon installieren.": "Reading copy-protected DVDs requires libdvdcss. On Fedora and related systems this package is not in the default repositories but in RPM Fusion (free), which is not set up on this system.\n\nPlease set up and enable RPM Fusion (free), then open this dialog again. Instructions are on rpmfusion.org.\n\nAll other components can be installed independently of this.",
 }
 
 
@@ -676,6 +678,8 @@ FR_FR = {
     "Die Distribution konnte nicht zugeordnet werden. Bitte die fehlenden Komponenten über den Paketverwalter des Systems nachinstallieren.": "La distribution n’a pas pu être identifiée. Veuillez installer les composants manquants via le gestionnaire de paquets du système.",
     "Bitte beachten:": "À noter :",
     "libdvdcss wird bei Debian und Ubuntu über libdvd-pkg aus dem Quelltext gebaut. Das geschieht im selben Arbeitsgang, braucht eine Internetverbindung und kann einige Minuten dauern; der Fortschritt steht im Protokoll.": "Sur Debian et Ubuntu, libdvdcss est compilé depuis les sources via libdvd-pkg. Cela se fait dans la même opération, nécessite une connexion Internet et peut prendre quelques minutes ; la progression s’affiche dans le journal.",
+    "RPM Fusion wird benötigt": "RPM Fusion est requis",
+    "Zum Lesen kopiergeschützter DVDs wird libdvdcss benötigt. Unter Fedora und verwandten Systemen liegt dieses Paket nicht in den Standardquellen, sondern im Repository RPM Fusion (free), das auf diesem System nicht eingerichtet ist.\n\nBitte RPM Fusion (free) einrichten und aktivieren, danach diesen Dialog erneut öffnen. Die Anleitung steht auf rpmfusion.org.\n\nAlle übrigen Komponenten lassen sich unabhängig davon installieren.": "La lecture des DVD protégés nécessite libdvdcss. Sur Fedora et les systèmes apparentés, ce paquet ne figure pas dans les dépôts par défaut mais dans RPM Fusion (free), qui n’est pas configuré sur ce système.\n\nVeuillez configurer et activer RPM Fusion (free), puis rouvrir cette boîte de dialogue. Les instructions se trouvent sur rpmfusion.org.\n\nTous les autres composants peuvent être installés indépendamment.",
 }
 
 
