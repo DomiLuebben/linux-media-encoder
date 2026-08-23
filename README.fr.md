@@ -32,6 +32,15 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 - FFmpeg avec `ffprobe`, disponible dans le `PATH`
 - *Facultatif (pour les disques optiques)* : `cdparanoia` (CD audio), `lsdvd` (structures DVD), `libbluray` (listes de lecture Blu-ray), `libdvdcss` (DVD chiffrés), `libaacs` (Blu-ray chiffrés)
 
+> **Blu-ray protégés :** LME ne fournit aucune clé de déchiffrement et n’en télécharge aucune. Les
+> disques non chiffrés et les dossiers BDMV fonctionnent tels quels. Pour les disques protégés par
+> AACS, `libaacs` cherche un fichier `KEYDB.cfg` dans `$XDG_CONFIG_HOME/aacs/` (par défaut
+> `~/.config/aacs/`) et dans les répertoires de `$XDG_CONFIG_DIRS` (par défaut `/etc/xdg/aacs/`) ;
+> LME examine tous ces emplacements et indique ce qui manque dans la boîte de dialogue. La mise à
+> disposition de telles clés relève de l’utilisateur et n’est pas autorisée dans certaines
+> juridictions (par exemple en Allemagne, § 95a UrhG). Les disques protégés en plus par BD+
+> nécessitent également `libbdplus`.
+
 ## Exécution sans installation
 
 ```bash

@@ -40,6 +40,14 @@ geschrieben in Python 3 mit PyQt6.
 - `ffmpeg` (inkl. `ffprobe`) im `PATH`
 - *Optional (für optische Datenträger)*: `cdparanoia` (Audio-CDs), `lsdvd` (DVD-Strukturen), `libbluray` (Blu-ray-Playlists), `libdvdcss` (CSS-DVDs), `libaacs` (AACS-Blu-rays)
 
+> **Kopiergeschützte Blu-rays:** LME bringt keine Entschlüsselungsschlüssel mit und lädt auch keine
+> herunter. Unverschlüsselte Discs und BDMV-Ordner funktionieren ohne Zusatz. Für AACS-geschützte
+> Discs sucht `libaacs` eine `KEYDB.cfg` unter `$XDG_CONFIG_HOME/aacs/` (Vorgabe `~/.config/aacs/`)
+> und in den Verzeichnissen aus `$XDG_CONFIG_DIRS` (Vorgabe `/etc/xdg/aacs/`); LME durchsucht alle
+> diese Orte und meldet im Ripper-Dialog, was fehlt. Das Bereitstellen solcher Schlüssel ist Sache
+> der Nutzerin bzw. des Nutzers und in manchen Rechtsordnungen (u. a. Deutschland, § 95a UrhG)
+> nicht zulässig. Discs mit zusätzlichem BD+-Schutz benötigen darüber hinaus `libbdplus`.
+
 ## Direkt starten (ohne Installation)
 
 ```bash

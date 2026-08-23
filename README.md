@@ -40,6 +40,14 @@ with Python 3 and PyQt6.
 - FFmpeg, including `ffprobe`, available in `PATH`
 - *Optional (for optical disc ripping)*: `cdparanoia` (Audio CDs), `lsdvd` (DVD structure inspection), `libbluray` (Blu-ray playlists), `libdvdcss` (encrypted DVDs), `libaacs` (encrypted Blu-rays)
 
+> **Copy-protected Blu-rays:** LME ships no decryption keys and downloads none. Unencrypted discs
+> and BDMV folders work out of the box. For AACS-protected discs, `libaacs` looks for a `KEYDB.cfg`
+> in `$XDG_CONFIG_HOME/aacs/` (default `~/.config/aacs/`) and in the directories listed in
+> `$XDG_CONFIG_DIRS` (default `/etc/xdg/aacs/`); LME searches all of these and reports what is
+> missing in the ripper dialog. Providing such keys is up to the user and is not permitted in some
+> jurisdictions (for example Germany, § 95a UrhG). Discs with additional BD+ protection also
+> require `libbdplus`.
+
 ## Run Without Installing
 
 ```bash

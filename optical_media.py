@@ -743,7 +743,19 @@ def parse_bdinfo_header(stdout_content: str) -> dict:
     'Volume Identifier   : %s', 'AACS detected       : %s',
     'libaacs detected    : %s', 'AACS handled        : %s'.
     """
-    header = {"volume_id": "", "aacs_detected": False, "aacs_handled": True}
+    header = {
+        "volume_id": "",
+        "aacs_detected": False,
+        "aacs_handled": True,
+        "bdplus_detected": False,
+        "bdplus_handled": True,
+    }
+    flags = {
+        "AACS detected": "aacs_detected",
+        "AACS handled": "aacs_handled",
+        "BD+ detected": "bdplus_detected",
+        "BD+ handled": "bdplus_handled",
+    }
     for line in (stdout_content or "").splitlines():
         if ":" not in line:
             continue
@@ -752,10 +764,8 @@ def parse_bdinfo_header(stdout_content: str) -> dict:
         value = value.strip()
         if key == "Volume Identifier":
             header["volume_id"] = value
-        elif key == "AACS detected":
-            header["aacs_detected"] = value.lower().startswith("yes")
-        elif key == "AACS handled":
-            header["aacs_handled"] = value.lower().startswith("yes")
+        elif key in flags:
+            header[flags[key]] = value.lower().startswith("yes")
     return header
 
 
@@ -907,10 +917,16 @@ def scan_bluray_source(
 
     if not titles:
         if header.get("aacs_detected") and not header.get("aacs_handled"):
+            _, hint = check_bluray_encryption_support()
             result.error = (
                 "Diese Blu-ray ist AACS-verschlüsselt und konnte nicht entschlüsselt "
-                "werden. Dafür werden libaacs und eine Schlüsseldatenbank "
-                "(~/.config/aacs/KEYDB.cfg) benötigt."
+                f"werden. {hint}"
+            )
+        elif header.get("bdplus_detected") and not header.get("bdplus_handled"):
+            result.error = (
+                "Diese Blu-ray ist zusätzlich mit BD+ geschützt und konnte nicht "
+                "gelesen werden. Dafür wird libbdplus benötigt; AACS-Schlüssel allein "
+                "genügen hier nicht."
             )
         else:
             result.error = "Blu-ray konnte nicht eingelesen werden."
@@ -1188,17 +1204,52 @@ def check_dvd_encryption_support() -> Tuple[bool, str]:
     return False, "libdvdcss ist nicht installiert. Verschlüsselte Video-DVDs (CSS) können nicht abgespielt oder gerippt werden."
 
 
+def aacs_keydb_search_paths() -> List[str]:
+    """Alle Orte, an denen libaacs nach KEYDB.cfg sucht — in dieser Reihenfolge.
+
+    libaacs folgt der XDG-Basisverzeichnis-Festlegung: zuerst
+    $XDG_CONFIG_HOME/aacs (Vorgabe ~/.config/aacs), danach jedes Verzeichnis
+    aus $XDG_CONFIG_DIRS (Vorgabe /etc/xdg). Nur den Benutzerpfad zu prüfen
+    übersieht eine systemweit abgelegte Datenbank.
+    """
+    paths: List[str] = []
+    config_home = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.expanduser("~/.config")
+    paths.append(os.path.join(config_home, "aacs", "KEYDB.cfg"))
+
+    config_dirs = os.environ.get("XDG_CONFIG_DIRS", "").strip() or "/etc/xdg"
+    for directory in config_dirs.split(":"):
+        directory = directory.strip()
+        if directory:
+            paths.append(os.path.join(directory, "aacs", "KEYDB.cfg"))
+    return paths
+
+
+def find_aacs_keydb() -> Optional[str]:
+    """Pfad der gefundenen AACS-Schlüsseldatenbank (oder None)."""
+    for path in aacs_keydb_search_paths():
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def check_bluray_encryption_support() -> Tuple[bool, str]:
-    """Prüft, ob libaacs und KEYDB.cfg für AACS-Blu-rays verfügbar sind."""
+    """Prüft, ob libaacs und eine KEYDB.cfg für AACS-Blu-rays verfügbar sind."""
     lib = ctypes.util.find_library("aacs")
     if not lib:
-        return False, "libaacs ist nicht installiert. Verschlüsselte Blu-rays (AACS) können nicht gelesen werden."
-    
-    keydb_path = os.path.expanduser("~/.config/aacs/KEYDB.cfg")
-    if not os.path.isfile(keydb_path):
-        return False, "libaacs ist vorhanden, aber die Schlüsseldatenbank ~/.config/aacs/KEYDB.cfg fehlt. Kommerzielle Blu-rays benötigen diese Schlüssel."
-    
-    return True, "libaacs und KEYDB.cfg sind vorhanden."
+        return False, (
+            "libaacs ist nicht installiert. Verschlüsselte Blu-rays (AACS) können nicht "
+            "gelesen werden. Unverschlüsselte Blu-rays und BDMV-Ordner funktionieren."
+        )
+
+    keydb_path = find_aacs_keydb()
+    if not keydb_path:
+        locations = " oder ".join(aacs_keydb_search_paths())
+        return False, (
+            "libaacs ist vorhanden, aber es liegt keine Schlüsseldatenbank KEYDB.cfg "
+            f"an einem der Suchorte ({locations}). Kommerzielle Blu-rays benötigen diese Schlüssel."
+        )
+
+    return True, f"libaacs und KEYDB.cfg sind vorhanden ({keydb_path})."
 
 
 def check_ffmpeg_optical_capabilities() -> dict[str, bool]:

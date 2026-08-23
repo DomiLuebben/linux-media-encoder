@@ -32,6 +32,8 @@ from optical_media import (
     get_optical_media_size,
     check_dvd_encryption_support,
     check_bluray_encryption_support,
+    find_aacs_keydb,
+    aacs_keydb_search_paths,
     check_ffmpeg_optical_capabilities,
 )
 
@@ -238,17 +240,44 @@ class OpticalMediaCoreTest(unittest.TestCase):
         self.assertEqual(result.main_title_idx, 0)
         self.assertEqual(result.total_duration_sec, 5700.0)
 
-    def test_parse_bdinfo_header_reads_volume_id_and_aacs_state(self):
+    def test_parse_bdinfo_header_reads_volume_id_and_protection_state(self):
         header = parse_bdinfo_header(BD_INFO_HEADER_FIXTURE)
         self.assertEqual(header["volume_id"], "BIG_BUCK_BUNNY_BD")
         self.assertTrue(header["aacs_detected"])
         self.assertFalse(header["aacs_handled"])
+        self.assertFalse(header["bdplus_detected"])
 
     def test_parse_bdinfo_header_defaults_on_empty_output(self):
         header = parse_bdinfo_header("")
         self.assertEqual(header["volume_id"], "")
         self.assertFalse(header["aacs_detected"])
         self.assertTrue(header["aacs_handled"])
+        self.assertFalse(header["bdplus_detected"])
+        self.assertTrue(header["bdplus_handled"])
+
+    def test_aacs_keydb_is_found_in_all_xdg_locations(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_home = os.path.join(tmpdir, "benutzer")
+            system_dir = os.path.join(tmpdir, "etc-xdg")
+            os.makedirs(os.path.join(config_home, "aacs"))
+            os.makedirs(os.path.join(system_dir, "aacs"))
+
+            env = {"XDG_CONFIG_HOME": config_home, "XDG_CONFIG_DIRS": system_dir}
+            with patch.dict(os.environ, env):
+                self.assertIsNone(find_aacs_keydb())
+
+                # Systemweite Ablage (dorthin schreiben die gaengigen
+                # KEYDB-Werkzeuge) muss ebenfalls gefunden werden.
+                system_keydb = os.path.join(system_dir, "aacs", "KEYDB.cfg")
+                with open(system_keydb, "w") as handle:
+                    handle.write("# mock")
+                self.assertEqual(find_aacs_keydb(), system_keydb)
+
+                # Der Benutzerpfad hat Vorrang.
+                user_keydb = os.path.join(config_home, "aacs", "KEYDB.cfg")
+                with open(user_keydb, "w") as handle:
+                    handle.write("# mock")
+                self.assertEqual(find_aacs_keydb(), user_keydb)
 
     def test_bluray_playlists_are_read_from_mpls_filenames(self):
         with tempfile.TemporaryDirectory() as tmpdir:
