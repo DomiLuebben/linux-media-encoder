@@ -21,12 +21,15 @@ from optical_media import (
     parse_cdparanoia_toc,
     parse_cd_text,
     parse_lsdvd_output,
-    parse_bdinfo_output,
+    parse_bdinfo_header,
+    list_bluray_playlists,
+    find_bdmv_root,
     build_dvd_rip_args,
     build_bluray_rip_args,
     build_audio_cd_rip_command,
     build_audio_encode_args,
     build_iso_dump_command,
+    get_optical_media_size,
     check_dvd_encryption_support,
     check_bluray_encryption_support,
     check_ffmpeg_optical_capabilities,
@@ -76,66 +79,62 @@ CD-TEXT for Track  5:
 	PERFORMER: Open Source Orchestra
 """
 
+# Echtes Ausgabeformat von 'lsdvd -Oy': width/height/fps/aspect/format liegen
+# FLACH auf dem Track, es gibt kein verschachteltes 'video'-Woerterbuch, und das
+# Seitenverhaeltnis wird mit Schraegstrich geschrieben ('16/9').
 LSDVD_OY_FIXTURE = """lsdvd = {
-    'device': '/dev/sr0',
-    'title': 'TEST_DVD_VIDEO',
-    'vmg_id': 'DVDVIDEO-VMG',
-    'provider_id': '',
-    'track': [
-        {
-            'ix': 1,
-            'length': 5400.0,
-            'vts_id': 'DVDVIDEO-VTS',
-            'playback_time': '01:30:00.000',
-            'chapter': [
-                {'ix': 1, 'length': 1800.0, 'startcell': 1},
-                {'ix': 2, 'length': 1800.0, 'startcell': 2},
-                {'ix': 3, 'length': 1800.0, 'startcell': 3}
-            ],
-            'subp': [
-                {'ix': 1, 'langcode': 'de', 'language': 'German', 'content': 'Normal'},
-                {'ix': 2, 'langcode': 'en', 'language': 'English', 'content': 'Normal'}
-            ],
-            'audio': [
-                {'ix': 1, 'langcode': 'de', 'language': 'German', 'format': 'ac3', 'channels': 6, 'frequency': 48000},
-                {'ix': 2, 'langcode': 'en', 'language': 'English', 'format': 'dts', 'channels': 6, 'frequency': 48000}
-            ],
-            'video': {'aspect': '16:9', 'format': 'PAL', 'width': 720, 'height': 576, 'fps': 25.0, 'codec': 'mpeg2video'}
-        },
-        {
-            'ix': 2,
-            'length': 300.0,
-            'vts_id': 'DVDVIDEO-VTS',
-            'playback_time': '00:05:00.000',
-            'chapter': [
-                {'ix': 1, 'length': 300.0, 'startcell': 1}
-            ],
-            'subp': [],
-            'audio': [
-                {'ix': 1, 'langcode': 'de', 'language': 'German', 'format': 'ac3', 'channels': 2, 'frequency': 48000}
-            ],
-            'video': {'aspect': '16:9', 'format': 'PAL', 'width': 720, 'height': 576, 'fps': 25.0, 'codec': 'mpeg2video'}
-        }
-    ]
+ 'device' : '/dev/sr0',
+ 'title' : 'TEST_DVD_VIDEO',
+ 'vmg_id' : 'DVDVIDEO-AMG',
+ 'provider_id' : '',
+ 'track' : [
+   { 'ix' : 1, 'length' : 5400.000, 'vts' : 1, 'ttn' : 1, 'fps' : 29.97,
+     'format' : 'NTSC', 'aspect' : '16/9', 'width' : 720, 'height' : 480,
+     'df' : 'Letterbox', 'angles' : 1,
+     'audio' : [
+       { 'ix' : 1, 'langcode' : 'de', 'language' : 'German', 'format' : 'ac3', 'frequency' : 48000, 'channels' : 6, 'streamid' : '0x80' },
+       { 'ix' : 2, 'langcode' : 'en', 'language' : 'English', 'format' : 'dts', 'frequency' : 48000, 'channels' : 6, 'streamid' : '0x88' }
+     ],
+     'chapter' : [
+       { 'ix' : 1, 'length' : 1800.000, 'startcell' : 1 },
+       { 'ix' : 2, 'length' : 1800.000, 'startcell' : 2 },
+       { 'ix' : 3, 'length' : 1800.000, 'startcell' : 3 }
+     ],
+     'subp' : [
+       { 'ix' : 1, 'langcode' : 'de', 'language' : 'German', 'streamid' : '0x20' },
+       { 'ix' : 2, 'langcode' : 'en', 'language' : 'English', 'streamid' : '0x21' }
+     ],
+   },
+   { 'ix' : 2, 'length' : 300.000, 'vts' : 2, 'ttn' : 1, 'fps' : 29.97,
+     'format' : 'NTSC', 'aspect' : '4/3', 'width' : 720, 'height' : 480,
+     'df' : 'Pan and Scan', 'angles' : 1,
+     'audio' : [
+       { 'ix' : 1, 'langcode' : 'de', 'language' : 'German', 'format' : 'ac3', 'frequency' : 48000, 'channels' : 2, 'streamid' : '0x80' }
+     ],
+     'chapter' : [
+       { 'ix' : 1, 'length' : 300.000, 'startcell' : 1 }
+     ],
+     'subp' : [],
+   }
+ ],
+ 'longest_track' : 1,
 }"""
 
-BD_INFO_FIXTURE = """Using libbluray version 1.4.1
+# 'bd_info' gibt KEINE Playlist-Liste aus. Das hier ist die tatsaechliche
+# Kopfzeilen-Ausgabe (abgeleitet aus den Formatzeichenketten des Programms).
+BD_INFO_HEADER_FIXTURE = """Using libbluray version 1.4.1
 Volume Identifier   : BIG_BUCK_BUNNY_BD
-Blu-ray Disc Type   : BD-ROM
-Disc Title          : Big Buck Bunny 1080p
-
-Playlists:
-  Playlist: 00800.MPLS, Duration: 00:10:34, Chapters: 5
-    Video Stream: H.264 / 1080p / 24 fps / 16:9 / High Profile 4.1
-    Audio Stream: DTS-HD Master Audio / 5.1 / 48 kHz / 24-bit (German)
-    Audio Stream: AC-3 / 5.1 / 48 kHz / 640 kbps (English)
-    Subtitle: PGS / German
-    Subtitle: PGS / English
-  Playlist: 00801.MPLS, Duration: 00:02:15, Chapters: 1
-    Video Stream: H.264 / 1080p / 24 fps / 16:9 / High Profile 4.1
-    Audio Stream: AC-3 / 2.0 / 48 kHz / 192 kbps (German)
+BluRay detected     : yes
+First Play supported: yes
+Top menu supported  : yes
+HDMV titles         : 4
+BD-J titles         : 0
+UNSUPPORTED titles  : 0
+AACS detected       : yes
+libaacs detected    : no
+AACS handled        : no
+BD+ detected        : no
 """
-
 
 class OpticalMediaCoreTest(unittest.TestCase):
 
@@ -218,44 +217,100 @@ class OpticalMediaCoreTest(unittest.TestCase):
         self.assertEqual(t1.subtitle_streams[0].language, "German")
         self.assertEqual(t1.subtitle_streams[1].language, "English")
 
+        # Wächter gegen einen stillen Rückfall auf die Vorgabewerte: lsdvd legt
+        # width/height/fps/aspect FLACH auf dem Track ab. Wer nur unter 'video'
+        # nachsieht, bekommt hier 720x576 @ 25.0 und '16:9' statt der echten
+        # NTSC-Werte — ohne dass irgendetwas fehlschlägt.
+        self.assertEqual((t1.width, t1.height), (720, 480))
+        self.assertAlmostEqual(t1.fps, 29.97, places=2)
+        self.assertEqual(t1.aspect_ratio, "16:9")
+        self.assertEqual(t1.video_codec, "mpeg2video")
+
         # Titel 2 (Bonus: 300s = 5 min)
         t2 = result.video_titles[1]
         self.assertEqual(t2.title_num, 2)
         self.assertEqual(t2.duration_sec, 300.0)
         self.assertEqual(t2.formatted_duration(), "05:00")
         self.assertFalse(t2.is_main_feature)
+        # '4/3' aus lsdvd wird auf die LME-Schreibweise '4:3' normalisiert.
+        self.assertEqual(t2.aspect_ratio, "4:3")
 
         self.assertEqual(result.main_title_idx, 0)
         self.assertEqual(result.total_duration_sec, 5700.0)
 
-    def test_parse_bdinfo_output(self):
-        result = parse_bdinfo_output(BD_INFO_FIXTURE)
-        self.assertIsNone(result.error)
-        self.assertEqual(result.disc_type, DiscType.BLURAY)
-        self.assertEqual(result.disc_label, "BIG_BUCK_BUNNY_BD")
-        self.assertEqual(len(result.video_titles), 2)
+    def test_parse_bdinfo_header_reads_volume_id_and_aacs_state(self):
+        header = parse_bdinfo_header(BD_INFO_HEADER_FIXTURE)
+        self.assertEqual(header["volume_id"], "BIG_BUCK_BUNNY_BD")
+        self.assertTrue(header["aacs_detected"])
+        self.assertFalse(header["aacs_handled"])
 
-        # Playlist 800 (Hauptfilm)
-        p1 = result.video_titles[0]
-        self.assertEqual(p1.title_num, 800)
-        self.assertEqual(p1.duration_sec, 634.0)  # 10*60 + 34
-        self.assertEqual(p1.chapter_count, 5)
-        self.assertEqual(p1.width, 1920)
-        self.assertEqual(p1.height, 1080)
-        self.assertEqual(p1.video_codec, "h264")
-        self.assertTrue(p1.is_main_feature)
-        self.assertEqual(len(p1.audio_streams), 2)
-        self.assertEqual(p1.audio_streams[0].codec, "dts-hd")
-        self.assertEqual(p1.audio_streams[0].language, "German")
-        self.assertEqual(p1.audio_streams[1].codec, "ac3")
-        self.assertEqual(p1.audio_streams[1].language, "English")
-        self.assertEqual(len(p1.subtitle_streams), 2)
+    def test_parse_bdinfo_header_defaults_on_empty_output(self):
+        header = parse_bdinfo_header("")
+        self.assertEqual(header["volume_id"], "")
+        self.assertFalse(header["aacs_detected"])
+        self.assertTrue(header["aacs_handled"])
 
-        # Playlist 801 (Kurzclip)
-        p2 = result.video_titles[1]
-        self.assertEqual(p2.title_num, 801)
-        self.assertEqual(p2.duration_sec, 135.0)  # 2*60 + 15
-        self.assertFalse(p2.is_main_feature)
+    def test_bluray_playlists_are_read_from_mpls_filenames(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bd_dir = os.path.join(tmpdir, "MyBluray")
+            playlist_dir = os.path.join(bd_dir, "BDMV", "PLAYLIST")
+            os.makedirs(playlist_dir)
+            for name in ("00800.mpls", "00801.MPLS", "00002.mpls", "liesmich.txt"):
+                with open(os.path.join(playlist_dir, name), "w") as handle:
+                    handle.write("mock")
+
+            self.assertEqual(find_bdmv_root(bd_dir), bd_dir)
+            self.assertEqual(find_bdmv_root(os.path.join(bd_dir, "BDMV")), bd_dir)
+            self.assertEqual(list_bluray_playlists(bd_dir), [2, 800, 801])
+            self.assertEqual(list_bluray_playlists(os.path.join(bd_dir, "BDMV")), [2, 800, 801])
+
+    def test_bluray_playlists_empty_without_bdmv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertIsNone(find_bdmv_root(tmpdir))
+            self.assertEqual(list_bluray_playlists(tmpdir), [])
+            self.assertEqual(list_bluray_playlists("/dev/sr0"), [])
+
+    def test_iso_without_video_signature_is_data_disc(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Daten-Abbild ohne VIDEO_TS/BDMV-Kennzeichen darf NICHT als
+            # DVD-Video durchgehen, sonst landet jede beliebige ISO im
+            # DVD-Titelparser.
+            data_iso = os.path.join(tmpdir, "spiel.iso")
+            with open(data_iso, "wb") as handle:
+                handle.write(b"\x00" * 40960)
+            self.assertEqual(detect_disc_type(data_iso), DiscType.DATA_DISC)
+
+            dvd_iso = os.path.join(tmpdir, "film.iso")
+            with open(dvd_iso, "wb") as handle:
+                handle.write(b"\x00" * 32768 + b"VIDEO_TS" + b"\x00" * 1024)
+            self.assertEqual(detect_disc_type(dvd_iso), DiscType.DVD_VIDEO)
+
+            bd_iso = os.path.join(tmpdir, "bluray.iso")
+            with open(bd_iso, "wb") as handle:
+                handle.write(b"\x00" * 32768 + b"index.bdmv" + b"\x00" * 1024)
+            self.assertEqual(detect_disc_type(bd_iso), DiscType.BLURAY)
+
+    def test_get_optical_media_size_reads_iso9660_descriptor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image = os.path.join(tmpdir, "medium.iso")
+            # Primary Volume Descriptor an Sektor 16: Kennung 'CD001',
+            # Volumenraum (Blockzahl) an Offset 80, Blockgröße an Offset 128.
+            pvd = bytearray(2048)
+            pvd[0] = 1
+            pvd[1:6] = b"CD001"
+            pvd[80:84] = (1000).to_bytes(4, "little")
+            pvd[128:130] = (2048).to_bytes(2, "little")
+            with open(image, "wb") as handle:
+                handle.write(b"\x00" * (16 * 2048))
+                handle.write(bytes(pvd))
+
+            # blockdev kennt eine gewöhnliche Datei nicht -> Rückfall auf den PVD
+            self.assertEqual(get_optical_media_size(image), 1000 * 2048)
+
+            leer = os.path.join(tmpdir, "leer.iso")
+            with open(leer, "wb") as handle:
+                handle.write(b"\x00" * 4096)
+            self.assertEqual(get_optical_media_size(leer), 0)
 
     def test_detect_disc_type_folder_structures(self):
         with tempfile.TemporaryDirectory() as tmpdir:

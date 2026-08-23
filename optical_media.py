@@ -295,14 +295,20 @@ def _inspect_iso_disc_type(iso_path: str) -> DiscType:
     """Prüft eine ISO-Datei auf DVD_VIDEO oder BLURAY Signaturen."""
     try:
         with open(iso_path, "rb") as f:
-            header = f.read(1024 * 1024)  # Erstes Megabyte lesen
+            # Die Verzeichniseinträge stehen kurz hinter den Volume-Descriptoren
+            # (ab Sektor 16). Acht Megabyte decken auch UDF-Abbilder mit
+            # ungewöhnlichem Aufbau ab und kosten kaum Zeit.
+            header = f.read(8 * 1024 * 1024)
             if b"VIDEO_TS" in header or b"DVDVIDEO" in header:
                 return DiscType.DVD_VIDEO
             if b"BDMV" in header or b"index.bdmv" in header:
                 return DiscType.BLURAY
     except OSError:
         pass
-    return DiscType.DVD_VIDEO
+    # Kein Video-Kennzeichen gefunden: als Daten-Abbild behandeln. Früher kam
+    # hier DVD_VIDEO heraus — damit landete jede beliebige ISO (z. B. ein
+    # Spiel- oder Installationsabbild) im DVD-Titelparser.
+    return DiscType.DATA_DISC
 
 
 # --- PARSER: AUDIO-CD (cdparanoia TOC auf STDERR & cd-info CD-TEXT) ---
@@ -468,13 +474,24 @@ def parse_lsdvd_output(stdout_content: str) -> DiscInspectionResult:
         title_num = int(t.get("ix", idx + 1))
         length = float(t.get("length", 0.0))
         
-        # Video-Infos
-        v_info = t.get("video", {})
-        width = int(v_info.get("width", 720) or 720)
-        height = int(v_info.get("height", 576) or 576)
-        fps = float(v_info.get("fps", 25.0) or 25.0)
-        aspect = str(v_info.get("aspect", "16:9") or "16:9")
-        v_codec = str(v_info.get("codec", "mpeg2video") or "mpeg2video")
+        # Video-Infos: 'lsdvd -Oy' legt width/height/fps/aspect/format FLACH auf
+        # dem Track ab, es gibt KEIN verschachteltes 'video'-Wörterbuch. Wer nur
+        # unter 'video' nachsieht, bekommt für jeden Titel stillschweigend die
+        # Vorgabewerte (720x576 @ 25 fps) — bei einer NTSC-DVD also falsche Maße
+        # und eine falsche Bildrate. Der verschachtelte Weg bleibt als Rückfall
+        # für Fremd-Wrapper erhalten, die flache Angabe hat Vorrang.
+        v_info = t.get("video") if isinstance(t.get("video"), dict) else {}
+
+        def _track_value(key, default):
+            value = t.get(key, v_info.get(key, default))
+            return default if value in (None, "") else value
+
+        width = int(_track_value("width", 720))
+        height = int(_track_value("height", 576))
+        fps = float(_track_value("fps", 25.0))
+        # lsdvd schreibt das Seitenverhältnis als '16/9', LME zeigt '16:9'.
+        aspect = str(_track_value("aspect", "16:9")).replace("/", ":")
+        v_codec = str(_track_value("codec", "mpeg2video"))
 
         # Kapitel
         chapters = []
@@ -673,118 +690,77 @@ def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 15) -> DiscInsp
     return result
 
 
-# --- PARSER: BLU-RAY (bd_info & ffprobe bluray: Fallback) ---
+# --- BLU-RAY: Playlists aus BDMV/PLAYLIST + Streams via ffprobe ---
+#
+# 'bd_info' aus libbluray taucht hier bewusst nur noch für den Datenträgernamen
+# und den AACS-Status auf: das Programm gibt Kopfdaten aus (Volume Identifier,
+# AACS/BD+-Status, Titelzahl), aber KEINE Playlist-Liste mit Dauern, Ton- und
+# Untertitelspuren. Die Playlist-Nummern stehen in BDMV/PLAYLIST/<nnnnn>.mpls,
+# die Inhalte liest ffprobe über das bluray:-Protokoll.
 
-def parse_bdinfo_output(stdout_content: str) -> DiscInspectionResult:
+_MPLS_NAME_RE = re.compile(r"^(\d{1,5})\.mpls$", re.IGNORECASE)
+
+
+def find_bdmv_root(source_path: str) -> Optional[str]:
+    """Liefert das Verzeichnis, das den BDMV-Ordner enthält (oder None)."""
+    if not source_path or not os.path.isdir(source_path):
+        return None
+    base = os.path.normpath(source_path)
+    if os.path.isdir(os.path.join(base, "BDMV")):
+        return base
+    if os.path.basename(base).upper() == "BDMV":
+        return os.path.dirname(base) or base
+    return None
+
+
+def list_bluray_playlists(source_path: str) -> List[int]:
+    """Playlist-Nummern aus BDMV/PLAYLIST/*.mpls, aufsteigend und doppelfrei.
+
+    Nur für Ordner-Quellen möglich — in einem Laufwerk oder einer ISO-Datei
+    liegt das Dateisystem nicht offen. Dort bleibt nur der Vorgabe-Titel.
     """
-    Parst die Ausgabe von 'bd_info <pfad>' (aus libbluray).
+    root = find_bdmv_root(source_path)
+    if not root:
+        return []
+    playlist_dir = os.path.join(root, "BDMV", "PLAYLIST")
+    if not os.path.isdir(playlist_dir):
+        return []
+    numbers: List[int] = []
+    try:
+        for entry in os.listdir(playlist_dir):
+            match = _MPLS_NAME_RE.match(entry)
+            if match:
+                numbers.append(int(match.group(1)))
+    except OSError:
+        return []
+    return sorted(set(numbers))
+
+
+def parse_bdinfo_header(stdout_content: str) -> dict:
+    """Liest die Kopfzeilen von 'bd_info' aus.
+
+    Echtes Ausgabeformat (aus den Formatzeichenketten des Programms):
+    'Volume Identifier   : %s', 'AACS detected       : %s',
+    'libaacs detected    : %s', 'AACS handled        : %s'.
     """
-    result = DiscInspectionResult(source_path="", disc_type=DiscType.BLURAY)
-    if not stdout_content:
-        result.error = "Leere bd_info Ausgabe"
-        return result
-
-    for line in stdout_content.splitlines():
-        if "Volume Identifier" in line and ":" in line:
-            result.disc_label = line.split(":", 1)[1].strip()
-        elif "Disc Title" in line and ":" in line:
-            if not result.disc_label:
-                result.disc_label = line.split(":", 1)[1].strip()
-
-    current_title: Optional[VideoTitleInfo] = None
-    max_duration = -1.0
-    main_idx = -1
-
-    for line in stdout_content.splitlines():
-        trimmed = line.strip()
-        if "Playlist:" in trimmed:
-            m = re.search(r"Playlist:\s*(\d+)(?:\.MPLS)?,?\s*Duration:\s*(\d+):(\d+):(\d+),?\s*Chapters:\s*(\d+)", trimmed, re.IGNORECASE)
-            if m:
-                p_id = int(m.group(1))
-                hrs, mins, secs = int(m.group(2)), int(m.group(3)), int(m.group(4))
-                dur = hrs * 3600 + mins * 60 + secs
-                ch_count = int(m.group(5))
-
-                current_title = VideoTitleInfo(
-                    title_num=p_id,
-                    duration_sec=float(dur),
-                    chapter_count=ch_count,
-                    width=1920,
-                    height=1080,
-                    fps=23.976,
-                    video_codec="h264",
-                    name=f"Playlist {p_id:05d}",
-                )
-                result.video_titles.append(current_title)
-
-                if dur > max_duration:
-                    max_duration = dur
-                    main_idx = len(result.video_titles) - 1
+    header = {"volume_id": "", "aacs_detected": False, "aacs_handled": True}
+    for line in (stdout_content or "").splitlines():
+        if ":" not in line:
             continue
-
-        if current_title:
-            if "Video Stream:" in trimmed:
-                v_line = trimmed.split("Video Stream:", 1)[1]
-                if "1080" in v_line:
-                    current_title.width, current_title.height = 1920, 1080
-                elif "2160" in v_line or "4K" in v_line:
-                    current_title.width, current_title.height = 3840, 2160
-                elif "720" in v_line:
-                    current_title.width, current_title.height = 1280, 720
-                if "H.264" in v_line or "AVC" in v_line:
-                    current_title.video_codec = "h264"
-                elif "HEVC" in v_line or "H.265" in v_line:
-                    current_title.video_codec = "hevc"
-                elif "VC-1" in v_line:
-                    current_title.video_codec = "vc1"
-            elif "Audio Stream:" in trimmed:
-                a_line = trimmed.split("Audio Stream:", 1)[1]
-                lang = "und"
-                m_lang = re.search(r"\(([^)]+)\)", a_line)
-                if m_lang:
-                    lang = m_lang.group(1).strip()
-                channels = 6 if "5.1" in a_line else (8 if "7.1" in a_line else 2)
-                codec = "ac3"
-                if "DTS-HD" in a_line:
-                    codec = "dts-hd"
-                elif "DTS" in a_line:
-                    codec = "dts"
-                elif "TrueHD" in a_line:
-                    codec = "truehd"
-                elif "PCM" in a_line or "LPCM" in a_line:
-                    codec = "pcm"
-                current_title.audio_streams.append(AudioStreamInfo(
-                    stream_idx=len(current_title.audio_streams),
-                    langcode=lang.lower()[:3],
-                    language=lang,
-                    codec=codec,
-                    channels=channels,
-                ))
-            elif "Subtitle:" in trimmed:
-                s_line = trimmed.split("Subtitle:", 1)[1]
-                lang = "und"
-                parts = s_line.split("/")
-                if len(parts) > 1:
-                    lang = parts[1].strip()
-                current_title.subtitle_streams.append(SubtitleStreamInfo(
-                    stream_idx=len(current_title.subtitle_streams),
-                    langcode=lang.lower()[:3],
-                    language=lang,
-                    codec="hdmv_pgs_subtitle",
-                ))
-
-    if main_idx >= 0 and main_idx < len(result.video_titles):
-        result.video_titles[main_idx].is_main_feature = True
-        result.main_title_idx = main_idx
-
-    result.total_duration_sec = sum(t.duration_sec for t in result.video_titles)
-    return result
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key == "Volume Identifier":
+            header["volume_id"] = value
+        elif key == "AACS detected":
+            header["aacs_detected"] = value.lower().startswith("yes")
+        elif key == "AACS handled":
+            header["aacs_handled"] = value.lower().startswith("yes")
+    return header
 
 
-def scan_bluray_source(source_path: str) -> DiscInspectionResult:
-    """
-    Liest eine Blu-ray-Quelle via 'bd_info' oder ffprobe ein.
-    """
+def read_bdinfo_header(source_path: str) -> dict:
+    """Ruft 'bd_info' auf und gibt die ausgewerteten Kopfzeilen zurück."""
     try:
         res = subprocess.run(
             ["bd_info", source_path],
@@ -792,38 +768,159 @@ def scan_bluray_source(source_path: str) -> DiscInspectionResult:
             text=True,
             timeout=30,
         )
-        if res.returncode == 0 and "Playlist" in res.stdout:
-            result = parse_bdinfo_output(res.stdout)
-            result.source_path = source_path
-            return result
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
-        pass
+        return {"volume_id": "", "aacs_detected": False, "aacs_handled": True}
+    return parse_bdinfo_header(res.stdout or "")
 
-    result = DiscInspectionResult(source_path=source_path, disc_type=DiscType.BLURAY)
+
+def _probe_bluray_playlist(
+    source_path: str,
+    playlist: Optional[int],
+    timeout: int = 20,
+) -> Optional[VideoTitleInfo]:
+    """Liest eine einzelne Playlist über 'ffprobe -playlist N -i bluray:<pfad>'.
+
+    playlist=None nutzt die Vorgabe von libbluray (entspricht -playlist -1).
+    """
+    cmd = ["ffprobe", "-v", "error"]
+    if playlist is not None and playlist >= 0:
+        cmd.extend(["-playlist", str(playlist)])
+    cmd.extend([
+        "-show_format", "-show_streams", "-show_chapters",
+        "-of", "json",
+        "-i", f"bluray:{source_path}",
+    ])
+
     try:
-        probe_url = f"bluray:{source_path}"
-        res = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", probe_url],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if res.returncode == 0:
-            data = json.loads(res.stdout)
-            fmt = data.get("format", {})
-            dur = float(fmt.get("duration", 0.0) or 0.0)
-            title_info = VideoTitleInfo(
-                title_num=1,
-                duration_sec=dur,
-                name="Hauptfilm (Blu-ray)",
-                is_main_feature=True,
-            )
-            result.video_titles.append(title_info)
-            result.main_title_idx = 0
-            result.total_duration_sec = dur
-    except Exception as e:
-        result.error = f"Blu-ray konnte nicht eingelesen werden: {e}"
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if res.returncode != 0:
+            return None
+        data = json.loads(res.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
 
+    duration = float((data.get("format") or {}).get("duration", 0.0) or 0.0)
+    width, height, fps = 1920, 1080, 23.976
+    v_codec = "h264"
+    audio_streams: List[AudioStreamInfo] = []
+    sub_streams: List[SubtitleStreamInfo] = []
+
+    for stream in data.get("streams", []):
+        stream_type = stream.get("codec_type")
+        tags = stream.get("tags") or {}
+        langcode = tags.get("language", "und")
+
+        if stream_type == "video":
+            width = int(stream.get("width") or width)
+            height = int(stream.get("height") or height)
+            v_codec = stream.get("codec_name", v_codec)
+            r_fps = str(stream.get("r_frame_rate", "") or "")
+            if "/" in r_fps:
+                num, den = r_fps.split("/", 1)
+                try:
+                    if float(den):
+                        fps = float(num) / float(den)
+                except ValueError:
+                    pass
+        elif stream_type == "audio":
+            audio_streams.append(AudioStreamInfo(
+                stream_idx=len(audio_streams),
+                langcode=langcode,
+                language=_resolve_language_name(langcode),
+                codec=stream.get("codec_name", "ac3"),
+                channels=int(stream.get("channels") or 2),
+                frequency=int(stream.get("sample_rate") or 48000),
+                title=tags.get("title", ""),
+            ))
+        elif stream_type == "subtitle":
+            sub_streams.append(SubtitleStreamInfo(
+                stream_idx=len(sub_streams),
+                langcode=langcode,
+                language=_resolve_language_name(langcode),
+                codec=stream.get("codec_name", "hdmv_pgs_subtitle"),
+                title=tags.get("title", ""),
+            ))
+
+    chapters: List[ChapterInfo] = []
+    for chapter in data.get("chapters", []):
+        start = float(chapter.get("start_time", 0.0) or 0.0)
+        end = float(chapter.get("end_time", 0.0) or 0.0)
+        chapters.append(ChapterInfo(
+            chapter_num=len(chapters) + 1,
+            start_sec=start,
+            duration_sec=max(0.0, end - start),
+        ))
+
+    number = playlist if (playlist is not None and playlist >= 0) else -1
+    name = f"Playlist {number:05d}" if number >= 0 else "Vorgabe-Titel (Playlist unbekannt)"
+
+    return VideoTitleInfo(
+        title_num=number,
+        duration_sec=duration,
+        chapter_count=len(chapters) if chapters else 1,
+        chapters=chapters,
+        width=width,
+        height=height,
+        fps=fps,
+        aspect_ratio="16:9",
+        video_codec=v_codec,
+        audio_streams=audio_streams,
+        subtitle_streams=sub_streams,
+        name=name,
+    )
+
+
+def scan_bluray_source(
+    source_path: str,
+    min_duration_sec: float = 60.0,
+    max_playlists: int = 40,
+) -> DiscInspectionResult:
+    """Liest eine Blu-ray-Quelle (Ordner, ISO oder Laufwerk) ein."""
+    result = DiscInspectionResult(source_path=source_path, disc_type=DiscType.BLURAY)
+
+    root = find_bdmv_root(source_path)
+    probe_path = root or source_path
+
+    header = read_bdinfo_header(probe_path)
+    result.disc_label = header.get("volume_id") or os.path.basename(
+        os.path.normpath(probe_path)
+    )
+
+    titles: List[VideoTitleInfo] = []
+    for number in list_bluray_playlists(source_path)[:max_playlists]:
+        info = _probe_bluray_playlist(probe_path, number)
+        if info and info.duration_sec > 0:
+            titles.append(info)
+
+    # Playlist-Verschleierung: viele Discs legen dutzende Kurz-Playlists an.
+    # Die kurzen nur wegwerfen, wenn danach überhaupt etwas übrig bleibt.
+    long_enough = [t for t in titles if t.duration_sec >= min_duration_sec]
+    if long_enough:
+        titles = long_enough
+
+    if not titles:
+        # Laufwerk oder ISO: das Dateisystem liegt nicht offen, also bleibt
+        # nur der Vorgabe-Titel von libbluray.
+        info = _probe_bluray_playlist(probe_path, None)
+        if info:
+            titles = [info]
+
+    if not titles:
+        if header.get("aacs_detected") and not header.get("aacs_handled"):
+            result.error = (
+                "Diese Blu-ray ist AACS-verschlüsselt und konnte nicht entschlüsselt "
+                "werden. Dafür werden libaacs und eine Schlüsseldatenbank "
+                "(~/.config/aacs/KEYDB.cfg) benötigt."
+            )
+        else:
+            result.error = "Blu-ray konnte nicht eingelesen werden."
+        return result
+
+    result.video_titles = titles
+    main_idx = max(range(len(titles)), key=lambda i: titles[i].duration_sec)
+    titles[main_idx].is_main_feature = True
+    result.main_title_idx = main_idx
+    result.total_duration_sec = sum(t.duration_sec for t in titles)
     return result
 
 
@@ -1041,6 +1138,44 @@ def build_iso_dump_command(
     if block_count and block_count > 0:
         cmd.append(f"count={block_count}")
     return cmd
+
+
+def get_optical_media_size(device_path: str) -> int:
+    """Größe des eingelegten Datenträgers in Bytes (0 = unbekannt).
+
+    Ohne diesen Wert liest 'dd' bis EOF — viele Laufwerke laufen dabei am
+    Discende in einen Lesefehler, und der Fortschrittsbalken bleibt mangels
+    Bezugsgröße die ganze Zeit auf 0 %.
+    """
+    try:
+        res = subprocess.run(
+            ["blockdev", "--getsize64", device_path],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if res.returncode == 0:
+            size = int((res.stdout or "0").strip() or 0)
+            if size > 0:
+                return size
+    except (subprocess.SubprocessError, FileNotFoundError, OSError, ValueError):
+        pass
+
+    # Rückfall: Sektorzahl aus dem ISO-9660-Primary-Volume-Descriptor
+    # (Sektor 16, Kennung 'CD001'; Volumenraum an Offset 80, Blockgröße an 128).
+    try:
+        with open(device_path, "rb") as handle:
+            handle.seek(16 * 2048)
+            pvd = handle.read(2048)
+        if len(pvd) >= 132 and pvd[1:6] == b"CD001":
+            blocks = int.from_bytes(pvd[80:84], "little")
+            block_size = int.from_bytes(pvd[128:130], "little") or 2048
+            if blocks > 0:
+                return blocks * block_size
+    except OSError:
+        pass
+
+    return 0
 
 
 # --- LAUFZEIT- & VERSCHLÜSSELUNGSPRÜFUNGEN ---

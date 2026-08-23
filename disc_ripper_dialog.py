@@ -40,6 +40,7 @@ from optical_media import (
     build_bluray_rip_args,
     check_dvd_encryption_support,
     check_bluray_encryption_support,
+    get_optical_media_size,
 )
 from disc_rip_worker import AudioCdRipWorker, IsoDumpWorker
 from ffmpeg_worker import FFmpegWorker
@@ -834,9 +835,14 @@ class DiscRipperDialog(QDialog):
         self._set_ui_ripping_state(True)
         self.txt_log.clear()
 
+        # Ohne Gesamtgröße liest dd bis EOF (Lesefehler am Discende) und der
+        # Fortschrittsbalken hätte keine Bezugsgröße.
+        total_size = get_optical_media_size(self.current_source)
+
         self.active_worker = IsoDumpWorker(
             device_path=self.current_source,
             output_iso_path=out_iso,
+            total_size_bytes=total_size,
             parent=self,
         )
         self.active_worker.progress_updated.connect(self._on_worker_progress)

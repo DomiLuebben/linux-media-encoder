@@ -420,6 +420,68 @@ Teilschritt die volle Suite laufen lassen, nicht erst am Ende.
 
 ---
 
+## 6a. Nachprüfung der Umsetzung (Claude/Opus 5, 23.08.2026)
+
+Umgesetzt wurde in einem Zug (Commit `330dbd4`, 153 Tests grün). Der Prüfstand war
+grün, **drei der Parser waren es trotzdem nicht** — sie liefen gegen erfundene
+Ausgabeformate, genau das, wovor Abschnitt 3.2 gewarnt hatte. `lsdvd`, `dvdauthor`
+und `xorriso` wurden nie installiert, die Test-DVD aus 5.2 nie gebaut; die Fixtures
+in `test_optical_media.py` waren Eigenerfindungen und haben den Fehler mitgetragen.
+
+**Behoben:**
+
+1. **`parse_lsdvd_output` las `t['video']['width'|'height'|'fps'|'aspect']`.**
+   `lsdvd -Oy` legt diese Angaben **flach auf dem Track** ab; ein
+   `video`-Wörterbuch gibt es nicht. Jeder Titel bekam damit stillschweigend
+   720×576 @ 25 fps — bei einer NTSC-DVD (720×480 @ 29.97) schlicht falsch, ohne
+   dass irgendetwas fehlschlug. Jetzt flach gelesen (verschachtelt bleibt
+   Rückfall), `'16/9'` wird auf `'16:9'` normalisiert. Fixture auf das echte
+   Format umgestellt, Wächter-Zusicherungen auf Maße/Bildrate ergänzt und
+   **negativ gegengeprüft** (mit dem alten Zugriff wird der Test rot).
+
+2. **`parse_bdinfo_output` parste ein Format, das `bd_info` nie ausgibt.**
+   Gegenprobe an den Formatzeichenketten des installierten Programms: es kennt
+   `Volume Identifier`, `AACS detected`, `HDMV titles` — aber **keine
+   `Playlist:`-Zeilen mit Dauer, Kapitel-, Ton- und Untertitelangaben**. Die
+   Torbedingung `"Playlist" in res.stdout` konnte nie wahr werden, der Parser war
+   toter Code, und jede Blu-ray fiel auf einen Rückfall zurück, der **einen**
+   Pseudo-Titel ohne Ton- und Untertitelspuren lieferte — die beworbene
+   Playlist-/Multi-Audio-/PGS-Erkennung existierte praktisch nicht.
+   Ersetzt durch: Playlist-Nummern aus `BDMV/PLAYLIST/*.mpls`, Inhalte je
+   Playlist über `ffprobe -playlist N -i bluray:<pfad>`, Kurz-Playlists gefiltert
+   (Verschleierung), Rückfall auf den Vorgabetitel bei Laufwerk/ISO. `bd_info`
+   liefert jetzt nur noch das, was es wirklich kann: Datenträgername und
+   AACS-Status — letzterer speist eine verständliche Fehlermeldung.
+
+3. **ISO-Abbild ohne Größenangabe.** `IsoDumpWorker` wurde ohne
+   `total_size_bytes` erzeugt → kein `count=` für `dd` (Lesefehler am Discende,
+   siehe 3.6) und ein Fortschrittsbalken, der dauerhaft auf 0 % steht. Neu:
+   `get_optical_media_size()` (`blockdev --getsize64`, Rückfall auf den
+   ISO-9660-Primary-Volume-Descriptor), im Dialog übergeben.
+
+4. **Nebenbefund:** `_inspect_iso_disc_type` gab für jede nicht erkannte ISO
+   `DVD_VIDEO` zurück — damit landete auch ein Spiel- oder Installationsabbild im
+   DVD-Titelparser. Jetzt `DATA_DISC`, Suchfenster von 1 auf 8 MB erweitert.
+
+**Geprüft und in Ordnung:** Argumentreihenfolge und `input_args` in
+`presets.py`, `bluray:`-URL nur in den Argumenten (der Existenzcheck des
+`FFmpegWorker` greift also nicht ins Leere), Übergehen von `_prefetch_source_info`
+bei Disc-Jobs, Drag-&-Drop-Reihenfolge, ISO-Modus für Audio-CDs gesperrt,
+`cdparanoia`-Parser auf **stderr**, atomares Schreiben in beiden neuen Workern,
+Laufzeitprüfung der FFmpeg-Fähigkeiten. Der i18n-Wächtertest wurde negativ
+gegengeprüft und meldet fehlende Schlüssel tatsächlich.
+
+**Prüfstand nach der Nachbesserung:** 158 Tests grün · `makepkg -f` erstellt
+`linux-media-encoder 1.10.0-1` · Hauptfenster und Ripper-Dialog starten in
+`de_DE`, `en_US` und `fr_FR` mit übersetzter Oberfläche.
+
+**Weiterhin offen — nicht abgenommen:** Audio-CD-Pfad (kein Laufwerk),
+Blu-ray-Pfad (kein Material, kein `libaacs`) und der DVD-Pfad am echten Medium
+(Test-DVD aus 5.2 wurde nie gebaut, `lsdvd` ist nicht installiert — der
+`lsdvd`-Weg lief also noch nie).
+
+---
+
 ## 7. Unverändert übernommen aus Geminis Plan
 
 Modulschnitt (`optical_media.py` / `disc_rip_worker.py` / `disc_ripper_dialog.py`),
