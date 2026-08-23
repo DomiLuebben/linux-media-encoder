@@ -178,3 +178,49 @@ class DiscTwoStageQueueTest(unittest.TestCase):
         self.assertNotIn("-playlist", zeile)
         self.assertNotIn("bluray:", zeile)
         self.assertIn("/var/tmp/stage.mkv", zeile)
+
+    def test_worker_status_ignores_initializing_message(self):
+        # "Initialisiere FFmpeg..." soll den aussagekräftigen Status nicht überschreiben
+        from mainwindow import MainWindow
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.mp4"))
+            self.app.processEvents()
+            window.current_job_idx = 0
+            job = window.jobs[0]
+            job["status"] = "Codiert..."
+            window._on_worker_status("Initialisiere FFmpeg...")
+            self.assertEqual(job["status"], "Codiert...")
+        finally:
+            window.close()
+
+    def test_worker_status_accepts_abort_message(self):
+        # "Breche ab..." soll den Status gezielt überschreiben
+        from mainwindow import MainWindow
+        window = MainWindow()
+        try:
+            window._add_file_to_queue(os.path.abspath("test_input.mp4"))
+            self.app.processEvents()
+            window.current_job_idx = 0
+            job = window.jobs[0]
+            job["status"] = "Codiert..."
+            window._on_worker_status("Breche ab...")
+            self.assertEqual(job["status"], "Breche ab...")
+        finally:
+            window.close()
+
+    def test_phase_status_formatting(self):
+        from mainwindow import MainWindow
+        from i18n import tr
+        window = MainWindow()
+        try:
+            # Ohne Phase -> gegebener Text bleibt erhalten
+            self.assertEqual(window._phase_status({}, "Codiert..."), "Codiert...")
+            # Phase rip -> Stufenbezeichnung + "..."
+            self.assertEqual(window._phase_status({"_phase": "rip"}, "Liest Disc..."), f"{tr('Stufe 1/2 · Liest Disc')}...")
+            # Phase encode -> Stufenbezeichnung + "..."
+            self.assertEqual(window._phase_status({"_phase": "encode"}, "Codiert..."), f"{tr('Stufe 2/2 · Konvertiert')}...")
+        finally:
+            window.close()
+
+

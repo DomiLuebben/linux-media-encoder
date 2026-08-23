@@ -3307,20 +3307,37 @@ class MainWindow(QMainWindow):
         if self.current_job_idx == -1:
             return
         job = self.jobs[self.current_job_idx]
-        job["status"] = self._phase_status(job, text)
+        # Der Worker sendet status_changed genau EINMAL, naemlich mit
+        # "Initialisiere FFmpeg..." unmittelbar vor dem Start. Diese Meldung
+        # ueberschrieb die aussagekraeftige Zustandsangabe ("Codiert...", bei
+        # Disc-Jobs die Stufe) -- und weil danach nie wieder eine kommt, blieb
+        # sie ueber die gesamte Laufzeit stehen. Sie traegt keine Information,
+        # die die Warteschlange nicht schon zeigt, also wird sie verworfen.
+        if str(text).startswith("Initialisiere"):
+            return
+        # Uebrig bleibt nur noch "Breche ab..." -- das soll die Stufenangabe
+        # bewusst ersetzen, denn es beschreibt den Zustand genauer.
+        job["status"] = text
         self._update_table_row(self.current_job_idx)
 
     @staticmethod
-    def _phase_status(job, text):
-        """Stellt bei Disc-Jobs die Stufe vor die Meldung des Workers."""
+    def _phase_label(job):
+        """Bezeichnung der laufenden Stufe eines Disc-Jobs (oder None)."""
         phase = job.get("_phase")
-        if not phase:
-            return text
-        label = tr("Stufe 1/2 · Liest Disc") if phase == "rip" else tr("Stufe 2/2 · Konvertiert")
-        # Die Anlaufmeldung des Workers traegt keine eigene Aussage.
-        if str(text).startswith("Initialisiere"):
-            return f"{label}..."
-        return f"{label} · {text}"
+        if phase == "rip":
+            return tr("Stufe 1/2 · Liest Disc")
+        if phase == "encode":
+            return tr("Stufe 2/2 · Konvertiert")
+        return None
+
+    def _phase_status(self, job, text):
+        """Bei zweistufigen Disc-Jobs ersetzt die Stufe den allgemeinen Text.
+
+        Frueher wurde sie davorgestellt, was zu "Stufe 1/2 · Liest Disc ·
+        Liest Disc..." fuehrte -- die Stufenbezeichnung sagt bereits alles.
+        """
+        label = self._phase_label(job)
+        return f"{label}..." if label else text
 
     def _on_worker_finished(self, success, message):
         if self.current_job_idx != -1:
