@@ -9,12 +9,18 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 
 ## Fonctionnalités
 
-- **Extraction en deux étapes** : les DVD et Blu-ray sont d’abord lus sans perte dans un dossier
+- **Conversion directe ou en deux étapes** (par défaut : directe) : le disque est converti
+  directement — mesuré sur un Blu-ray, les deux voies lisent à la même vitesse (5,6× contre 5,5×),
+  car la limite vient du lecteur et non du processeur. En option, les DVD et Blu-ray sont d’abord
+  lus sans perte dans un dossier
   temporaire, puis convertis depuis celui-ci. Le lecteur ne tourne ainsi que pendant la courte
   lecture au lieu de toute la conversion. Les deux étapes affichent progression, vitesse et temps
   restant (« Étape 1/2 · Lecture du disque », « Étape 2/2 · Conversion »). LME choisit lui-même le
   dossier temporaire selon l’espace libre — `/tmp` est un tmpfs en mémoire sur de nombreux
-  systèmes ; un dossier personnalisé peut être défini dans l’extracteur.
+  systèmes ; un dossier personnalisé peut être défini dans l’extracteur. Si aucun emplacement n’a la
+  place, LME bascule automatiquement sur la conversion directe. Le mode en deux étapes est utile pour
+  les codecs exigeants, les machines peu puissantes, plusieurs versions d’un même titre ou les
+  disques rayés.
 - **Extracteur CD / DVD / BD (Ctrl+D)** : Lecture et extraction de CD audio (avec métadonnées CD-Text vers FLAC/MP3/AAC/Opus), DVD-Vidéo (sélection des titres, pistes audio et sous-titres vers MKV ou file d’attente), disques Blu-ray (analyse des listes de lecture) et création d’images ISO 1:1
 - File d’attente multitâche avec glisser-déposer de fichiers et d’images ISO
 - Réglages d’exportation, aperçu de la source et métadonnées via `ffprobe`

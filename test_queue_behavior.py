@@ -114,6 +114,7 @@ class DiscTwoStageQueueTest(unittest.TestCase):
             "input_args": ["-playlist", "3"],
             "disc_type": "bluray",
             "title_num": 3,
+            "two_stage": True,
         }
         if staged is not None:
             settings["_staged_source"] = staged
@@ -142,6 +143,17 @@ class DiscTwoStageQueueTest(unittest.TestCase):
         from mainwindow import MainWindow
         window = MainWindow()
         self.assertTrue(window._job_needs_disc_rip(self._disc_job("/gibt/es/nicht.mkv")))
+
+    def test_direct_conversion_is_the_default_and_skips_the_stage(self):
+        # Ohne ausdrueckliche Wahl wird direkt von der Disc konvertiert:
+        # gemessen setzt das Laufwerk die Grenze, nicht die CPU.
+        from mainwindow import MainWindow
+        window = MainWindow()
+        job = self._disc_job()
+        job["settings"]["two_stage"] = False
+        self.assertFalse(window._job_needs_disc_rip(job))
+        del job["settings"]["two_stage"]
+        self.assertFalse(window._job_needs_disc_rip(job))
 
     def test_ordinary_file_jobs_are_untouched(self):
         from mainwindow import MainWindow

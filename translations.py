@@ -404,6 +404,8 @@ EN_US = {
     "Auslesen der Disc fehlgeschlagen: {error}": "Reading the disc failed: {error}",
     "Stufe 1/2 · Liest Disc": "Step 1/2 · Reading disc",
     "Stufe 2/2 · Konvertiert": "Step 2/2 · Converting",
+    "Erst komplett auslesen, dann konvertieren (zweistufig)": "Read the disc completely first, then convert (two-stage)",
+    "Aus: die Disc wird direkt konvertiert — meist schneller und ohne Platzbedarf.\nAn: die Disc wird zuerst verlustfrei zwischengespeichert. Das lohnt sich, wenn die Umwandlung langsamer ist als das Laufwerk (starke Codecs wie HEVC/AV1, schwacher Rechner), wenn aus demselben Titel mehrere Fassungen entstehen sollen oder wenn die Disc zerkratzt ist — ein Lesefehler kostet dann nur das Auslesen.": "Off: the disc is converted directly — usually faster and needs no disk space.\nOn: the disc is staged losslessly first. This pays off when conversion is slower than the drive (demanding codecs such as HEVC/AV1, a weak machine), when several versions are to be made from the same title, or when the disc is scratched — a read error then only costs the read pass.",
 }
 
 
@@ -722,6 +724,8 @@ FR_FR = {
     "Auslesen der Disc fehlgeschlagen: {error}": "La lecture du disque a échoué : {error}",
     "Stufe 1/2 · Liest Disc": "Étape 1/2 · Lecture du disque",
     "Stufe 2/2 · Konvertiert": "Étape 2/2 · Conversion",
+    "Erst komplett auslesen, dann konvertieren (zweistufig)": "Lire d’abord le disque en entier, puis convertir (en deux étapes)",
+    "Aus: die Disc wird direkt konvertiert — meist schneller und ohne Platzbedarf.\nAn: die Disc wird zuerst verlustfrei zwischengespeichert. Das lohnt sich, wenn die Umwandlung langsamer ist als das Laufwerk (starke Codecs wie HEVC/AV1, schwacher Rechner), wenn aus demselben Titel mehrere Fassungen entstehen sollen oder wenn die Disc zerkratzt ist — ein Lesefehler kostet dann nur das Auslesen.": "Désactivé : le disque est converti directement — généralement plus rapide et sans besoin d’espace disque.\nActivé : le disque est d’abord copié sans perte. Cela vaut la peine lorsque la conversion est plus lente que le lecteur (codecs exigeants comme HEVC/AV1, machine peu puissante), lorsque plusieurs versions doivent être produites à partir du même titre, ou lorsque le disque est rayé — une erreur de lecture ne coûte alors que la passe de lecture.",
 }
 
 

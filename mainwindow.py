@@ -2790,6 +2790,12 @@ class MainWindow(QMainWindow):
         settings = job.get("settings") or {}
         if not settings.get("input_args") and not settings.get("disc_type"):
             return False
+        # Vorgabe ist der direkte Weg. Gemessen an einer Blu-ray liegen beide
+        # Wege beim Auslesen gleichauf (5,6x gegen 5,5x) — die Grenze setzt das
+        # Laufwerk, nicht die CPU. Zweistufig lohnt erst, wenn die Umwandlung
+        # langsamer ist als das Laufwerk.
+        if not settings.get("two_stage"):
+            return False
         staged = settings.get("_staged_source")
         return not (staged and os.path.exists(staged))
 
@@ -2812,16 +2818,20 @@ class MainWindow(QMainWindow):
         )
 
         if staging_dir is None:
+            # Kein Platz ist kein Grund zu scheitern: der direkte Weg braucht
+            # gar keinen Zwischenspeicher und funktioniert genauso.
             lines = "\n".join(
                 f"  {path} — {optical_media.format_bytes(free)} frei"
                 for path, free in report
             )
-            self._fail_current_job(tr(
-                "Kein Zwischenspeicher mit genug Platz gefunden. Benoetigt werden etwa "
-                "{needed}.\n\nGeprueft wurde:\n{places}",
-                needed=optical_media.format_bytes(int(needed * optical_media.STAGING_MARGIN)),
-                places=lines,
-            ))
+            self.console.append(
+                "\n[LME DISC] Kein Zwischenspeicher mit genug Platz "
+                f"(benoetigt etwa {optical_media.format_bytes(int(needed * optical_media.STAGING_MARGIN))}):\n"
+                f"{lines}\n[LME DISC] Weiche auf direkte Konvertierung von der Disc aus."
+            )
+            settings.pop("_staged_source", None)
+            settings["two_stage"] = False
+            self._start_current_ffmpeg_job(job)
             return
 
         try:

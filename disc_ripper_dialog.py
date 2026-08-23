@@ -69,9 +69,12 @@ class DiscRipperDialog(QDialog):
         self.current_video_job_idx: int = -1
 
         self._init_ui()
-        self.edit_staging_dir.setText(
-            str(QSettings("LinuxMediaEncoder", "LinuxMediaEncoder").value("staging_dir", "") or "")
-        )
+        _store = QSettings("LinuxMediaEncoder", "LinuxMediaEncoder")
+        self.edit_staging_dir.setText(str(_store.value("staging_dir", "") or ""))
+        # Vorgabe ist der direkte Weg: gemessen ist er auf ueblicher Hardware
+        # schneller, weil das Laufwerk und nicht die CPU die Grenze setzt.
+        self.chk_two_stage.setChecked(str(_store.value("two_stage_rip", "false")).lower() == "true")
+        self._on_two_stage_toggled(self.chk_two_stage.isChecked())
         self._update_environment_notice()
         self._refresh_drives()
 
@@ -156,6 +159,17 @@ class DiscRipperDialog(QDialog):
         # Zwischenspeicher fuer den zweistufigen Rip. Leer = automatisch nach
         # freiem Platz; /tmp ist auf vielen Systemen ein tmpfs (RAM) und taugt
         # fuer einen Blu-ray-Remux von 30+ GB nicht.
+        self.chk_two_stage = QCheckBox(tr("Erst komplett auslesen, dann konvertieren (zweistufig)"))
+        self.chk_two_stage.setToolTip(tr(
+            "Aus: die Disc wird direkt konvertiert — meist schneller und ohne Platzbedarf.\n"
+            "An: die Disc wird zuerst verlustfrei zwischengespeichert. Das lohnt sich, wenn die "
+            "Umwandlung langsamer ist als das Laufwerk (starke Codecs wie HEVC/AV1, schwacher "
+            "Rechner), wenn aus demselben Titel mehrere Fassungen entstehen sollen oder wenn die "
+            "Disc zerkratzt ist — ein Lesefehler kostet dann nur das Auslesen."
+        ))
+        self.chk_two_stage.toggled.connect(self._on_two_stage_toggled)
+        main_layout.addWidget(self.chk_two_stage)
+
         stage_row = QHBoxLayout()
         stage_row.setSpacing(8)
         stage_row.addWidget(QLabel(tr("Zwischenspeicher:")))
@@ -172,6 +186,7 @@ class DiscRipperDialog(QDialog):
         btn_stage.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         btn_stage.clicked.connect(self._on_choose_staging_dir)
         stage_row.addWidget(btn_stage)
+        self._stage_row_widgets = (self.edit_staging_dir, btn_stage)
         main_layout.addLayout(stage_row)
 
         self.lbl_warn_encryption = QLabel("")
@@ -775,6 +790,7 @@ class DiscRipperDialog(QDialog):
                         # Fuer die Groessenschaetzung des Zwischenspeichers.
                         "source_bitrate": title.bitrate_bps,
                         "staging_dir": self.edit_staging_dir.text().strip(),
+                        "two_stage": self.chk_two_stage.isChecked(),
                     },
                     "status": "Bereit",
                     "progress": 0.0,
@@ -947,6 +963,12 @@ class DiscRipperDialog(QDialog):
         self.active_worker.status_changed.connect(self._on_worker_status)
         self.active_worker.finished.connect(self._on_direct_rip_finished)
         self.active_worker.start()
+
+    def _on_two_stage_toggled(self, checked):
+        """Der Zwischenspeicher ist nur beim zweistufigen Weg von Belang."""
+        for widget in getattr(self, "_stage_row_widgets", ()):
+            widget.setEnabled(bool(checked))
+        QSettings("LinuxMediaEncoder", "LinuxMediaEncoder").setValue("two_stage_rip", bool(checked))
 
     def _on_choose_staging_dir(self):
         """Ordner fuer die Zwischendatei waehlen und dauerhaft merken."""

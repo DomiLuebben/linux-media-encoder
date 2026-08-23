@@ -9,12 +9,17 @@ geschrieben in Python 3 mit PyQt6.
 
 ## Funktionen
 
-- **Zweistufiges Rippen**: DVDs und Blu-rays werden zuerst verlustfrei in einen Zwischenspeicher
+- **Direkt konvertieren oder zweistufig** (Voreinstellung: direkt): Standardmäßig wird direkt von
+  der Disc konvertiert — an einer Blu-ray gemessen lesen beide Wege gleich schnell (5,6× gegen
+  5,5×), die Grenze setzt das Laufwerk und nicht der Prozessor. Wahlweise wird die Disc zuerst
+  verlustfrei in einen Zwischenspeicher
   ausgelesen und danach von dort konvertiert. Das Laufwerk läuft dadurch nur während des kurzen
   Auslesens statt über die gesamte Umwandlung. Beide Stufen zeigen Fortschritt, Tempo und Restzeit
   („Stufe 1/2 · Liest Disc", „Stufe 2/2 · Konvertiert"). Den Zwischenspeicher wählt LME selbst nach
   freiem Platz — `/tmp` ist auf vielen Systemen ein tmpfs im Arbeitsspeicher und scheidet für einen
-  30-GB-Remux aus; ein eigener Ordner lässt sich im Ripper festlegen.
+  30-GB-Remux aus; ein eigener Ordner lässt sich im Ripper festlegen. Fehlt überall der Platz,
+  wird automatisch direkt konvertiert statt abzubrechen. Zweistufig lohnt sich bei anspruchsvollen
+  Codecs, schwachen Rechnern, mehreren Fassungen aus einem Titel oder zerkratzten Discs.
 - **CD / DVD / BD Ripper (Strg+D)**: Einlesen und Rippen von Audio-CDs (inkl. CD-Text nach FLAC/MP3/AAC/Opus), DVD-Video (Titel-, Audio- & Untertitel-Auswahl nach MKV oder Warteschlange), Blu-ray Discs (Playlist-Inspektion) sowie 1:1 ISO-Abbilderstellung
 - Warteschlange (Queue) mit mehreren Jobs, Drag & Drop von Dateien und Disc-/ISO-Images
 - AME-artiger Export-Dialog mit echter Quell-Vorschau & Metadaten (via `ffprobe`)
