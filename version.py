@@ -5,4 +5,4 @@ Einzige Quelle für main.py, den Über-Dialog und (manuell nachgezogen) das
 PKGBUILD — die Version muss nur noch hier und im PKGBUILD gepflegt werden.
 """
 
-__version__ = "1.10.0"
+__version__ = "1.11.0"
