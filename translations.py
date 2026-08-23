@@ -393,6 +393,17 @@ EN_US = {
     "Es wurde kein Titel zum Rippen vorbereitet.": "No title was prepared for ripping.",
     "Diese Medienart kann nicht gerippt werden.": "This type of medium cannot be ripped.",
     "{count} Job(s) wurden in die Warteschlange eingereiht.\n\nEs wurde noch nichts gerippt: Die Verarbeitung startet erst mit „Start\" im Hauptfenster. Wer sofort und verlustfrei rippen möchte, wählt im Ripper stattdessen „Direkt rippen (Verlustfrei / Remux)\".": "{count} job(s) were added to the queue.\n\nNothing has been ripped yet: processing only starts when you press \"Start\" in the main window. To rip immediately and losslessly, choose \"Rip directly (Lossless / Remux)\" in the ripper instead.",
+    "Zwischenspeicher:": "Staging folder:",
+    "Automatisch (Ordner mit ausreichend freiem Platz)": "Automatic (folder with enough free space)",
+    "Die Disc wird zuerst verlustfrei hierher ausgelesen und danach von dort konvertiert. Leer lassen: LME sucht selbst einen Ordner mit genug Platz.": "The disc is first read losslessly to this folder and converted from there afterwards. Leave empty and LME picks a folder with enough space itself.",
+    "Wählen...": "Choose...",
+    "Zwischenspeicher wählen": "Choose staging folder",
+    "Liest Disc...": "Reading disc...",
+    "Kein Zwischenspeicher mit genug Platz gefunden. Benoetigt werden etwa {needed}.\n\nGeprueft wurde:\n{places}": "No staging folder with enough space was found. About {needed} is required.\n\nChecked:\n{places}",
+    "Zwischenspeicher nicht nutzbar: {error}": "Staging folder unusable: {error}",
+    "Auslesen der Disc fehlgeschlagen: {error}": "Reading the disc failed: {error}",
+    "Stufe 1/2 · Liest Disc": "Step 1/2 · Reading disc",
+    "Stufe 2/2 · Konvertiert": "Step 2/2 · Converting",
 }
 
 
@@ -700,6 +711,17 @@ FR_FR = {
     "Es wurde kein Titel zum Rippen vorbereitet.": "Aucun titre n’a été préparé pour l’extraction.",
     "Diese Medienart kann nicht gerippt werden.": "Ce type de média ne peut pas être extrait.",
     "{count} Job(s) wurden in die Warteschlange eingereiht.\n\nEs wurde noch nichts gerippt: Die Verarbeitung startet erst mit „Start\" im Hauptfenster. Wer sofort und verlustfrei rippen möchte, wählt im Ripper stattdessen „Direkt rippen (Verlustfrei / Remux)\".": "{count} tâche(s) ont été ajoutées à la file d’attente.\n\nRien n’a encore été extrait : le traitement ne démarre qu’avec « Démarrer » dans la fenêtre principale. Pour extraire immédiatement et sans perte, choisissez plutôt « Extraction directe (sans perte / remux) » dans l’extracteur.",
+    "Zwischenspeicher:": "Dossier temporaire :",
+    "Automatisch (Ordner mit ausreichend freiem Platz)": "Automatique (dossier disposant d’assez d’espace libre)",
+    "Die Disc wird zuerst verlustfrei hierher ausgelesen und danach von dort konvertiert. Leer lassen: LME sucht selbst einen Ordner mit genug Platz.": "Le disque est d’abord lu sans perte dans ce dossier, puis converti depuis celui-ci. Laissez vide : LME choisit lui-même un dossier disposant d’assez d’espace.",
+    "Wählen...": "Choisir...",
+    "Zwischenspeicher wählen": "Choisir le dossier temporaire",
+    "Liest Disc...": "Lecture du disque...",
+    "Kein Zwischenspeicher mit genug Platz gefunden. Benoetigt werden etwa {needed}.\n\nGeprueft wurde:\n{places}": "Aucun dossier temporaire disposant d’assez d’espace n’a été trouvé. Environ {needed} sont nécessaires.\n\nVérifié :\n{places}",
+    "Zwischenspeicher nicht nutzbar: {error}": "Dossier temporaire inutilisable : {error}",
+    "Auslesen der Disc fehlgeschlagen: {error}": "La lecture du disque a échoué : {error}",
+    "Stufe 1/2 · Liest Disc": "Étape 1/2 · Lecture du disque",
+    "Stufe 2/2 · Konvertiert": "Étape 2/2 · Conversion",
 }
 
 

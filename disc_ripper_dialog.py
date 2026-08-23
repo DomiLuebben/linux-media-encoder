@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from typing import Any, List, Optional
 
-from PyQt6.QtCore import Qt, QSize, QProcess, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QProcess, QSettings, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -69,6 +69,9 @@ class DiscRipperDialog(QDialog):
         self.current_video_job_idx: int = -1
 
         self._init_ui()
+        self.edit_staging_dir.setText(
+            str(QSettings("LinuxMediaEncoder", "LinuxMediaEncoder").value("staging_dir", "") or "")
+        )
         self._update_environment_notice()
         self._refresh_drives()
 
@@ -149,6 +152,27 @@ class DiscRipperDialog(QDialog):
         env_row.addWidget(self.btn_install_deps, 0)
 
         main_layout.addLayout(env_row)
+
+        # Zwischenspeicher fuer den zweistufigen Rip. Leer = automatisch nach
+        # freiem Platz; /tmp ist auf vielen Systemen ein tmpfs (RAM) und taugt
+        # fuer einen Blu-ray-Remux von 30+ GB nicht.
+        stage_row = QHBoxLayout()
+        stage_row.setSpacing(8)
+        stage_row.addWidget(QLabel(tr("Zwischenspeicher:")))
+        self.edit_staging_dir = QLineEdit()
+        self.edit_staging_dir.setPlaceholderText(
+            tr("Automatisch (Ordner mit ausreichend freiem Platz)")
+        )
+        self.edit_staging_dir.setToolTip(tr(
+            "Die Disc wird zuerst verlustfrei hierher ausgelesen und danach von dort "
+            "konvertiert. Leer lassen: LME sucht selbst einen Ordner mit genug Platz."
+        ))
+        stage_row.addWidget(self.edit_staging_dir, 1)
+        btn_stage = QPushButton(tr("Wählen..."))
+        btn_stage.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        btn_stage.clicked.connect(self._on_choose_staging_dir)
+        stage_row.addWidget(btn_stage)
+        main_layout.addLayout(stage_row)
 
         self.lbl_warn_encryption = QLabel("")
         self.lbl_warn_encryption.setStyleSheet("color: #ffaa00; font-style: italic;")
@@ -748,6 +772,9 @@ class DiscRipperDialog(QDialog):
                         "source_width": title.width,
                         "source_height": title.height,
                         "source_duration": title.duration_sec,
+                        # Fuer die Groessenschaetzung des Zwischenspeichers.
+                        "source_bitrate": title.bitrate_bps,
+                        "staging_dir": self.edit_staging_dir.text().strip(),
                     },
                     "status": "Bereit",
                     "progress": 0.0,
@@ -920,6 +947,14 @@ class DiscRipperDialog(QDialog):
         self.active_worker.status_changed.connect(self._on_worker_status)
         self.active_worker.finished.connect(self._on_direct_rip_finished)
         self.active_worker.start()
+
+    def _on_choose_staging_dir(self):
+        """Ordner fuer die Zwischendatei waehlen und dauerhaft merken."""
+        start = self.edit_staging_dir.text().strip() or os.path.expanduser("~")
+        chosen = QFileDialog.getExistingDirectory(self, tr("Zwischenspeicher wählen"), start)
+        if chosen:
+            self.edit_staging_dir.setText(chosen)
+            QSettings("LinuxMediaEncoder", "LinuxMediaEncoder").setValue("staging_dir", chosen)
 
     def _update_environment_notice(self):
         """Meldet dauerhaft, welche externen Komponenten auf dem System fehlen.

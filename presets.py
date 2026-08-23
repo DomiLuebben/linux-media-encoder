@@ -542,6 +542,9 @@ SUBTITLE_SETTING_KEYS = (
 # Nur für einen laufenden Job gültige Zwischenzustände — dürfen nie auf andere
 # Jobs kopiert werden ("Einstellungen auf alle anwenden").
 TRANSIENT_SETTING_KEYS = (
+    # Zwischendatei eines Disc-Jobs: ein Pfad aus dem letzten Lauf waere nach
+    # einem Neustart wertlos und wuerde Stufe 1 stillschweigend ueberspringen.
+    "_staged_source",
     "temp_srt_path",
     "temp_audio_path",
     "_subtitle_ai_stage",

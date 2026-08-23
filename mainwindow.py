@@ -7,6 +7,7 @@ mit bidirektional synchronisierten Bitraten-Schiebereglern.
 
 import json
 import os
+import uuid
 from PyQt6.QtCore import Qt, QSize, QSettings, QProcess, QTimer, QUrl, pyqtSlot
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTableWidget, QTableWidgetItem,
@@ -2770,11 +2771,153 @@ class MainWindow(QMainWindow):
             
         job = self.jobs[self.current_job_idx]
 
+        # Disc-Jobs werden zweistufig verarbeitet: erst verlustfrei von der
+        # Disc in eine Zwischendatei, dann daraus konvertieren. So laeuft das
+        # Laufwerk nur waehrend des kurzen Auslesens statt ueber die gesamte
+        # Umwandlung, und ein Lesefehler kostet nicht den ganzen Durchgang.
+        if self._job_needs_disc_rip(job):
+            self._run_disc_rip_stage(job)
+            return
+
         if self._job_needs_subtitle_generation(job):
             self._run_subtitle_pipeline(job)
             return
 
         self._start_current_ffmpeg_job(job)
+
+    def _job_needs_disc_rip(self, job):
+        """True, wenn die Quelle eine Disc ist und noch keine Zwischendatei existiert."""
+        settings = job.get("settings") or {}
+        if not settings.get("input_args") and not settings.get("disc_type"):
+            return False
+        staged = settings.get("_staged_source")
+        return not (staged and os.path.exists(staged))
+
+    def _run_disc_rip_stage(self, job):
+        """Stufe 1: Titel verlustfrei von der Disc in eine Zwischendatei lesen."""
+        import optical_media
+
+        settings = job["settings"]
+        disc_type = optical_media.DiscType(settings.get("disc_type") or "bluray")
+
+        needed = optical_media.estimate_remux_bytes(
+            settings.get("source_duration") or 0.0,
+            settings.get("source_bitrate") or 0,
+            disc_type,
+        )
+        staging_dir, report = optical_media.choose_staging_dir(
+            needed,
+            preferred=settings.get("staging_dir") or self._configured_staging_dir(),
+            output_dir=job.get("output_dir"),
+        )
+
+        if staging_dir is None:
+            lines = "\n".join(
+                f"  {path} — {optical_media.format_bytes(free)} frei"
+                for path, free in report
+            )
+            self._fail_current_job(tr(
+                "Kein Zwischenspeicher mit genug Platz gefunden. Benoetigt werden etwa "
+                "{needed}.\n\nGeprueft wurde:\n{places}",
+                needed=optical_media.format_bytes(int(needed * optical_media.STAGING_MARGIN)),
+                places=lines,
+            ))
+            return
+
+        try:
+            os.makedirs(staging_dir, exist_ok=True)
+        except OSError as exc:
+            self._fail_current_job(tr("Zwischenspeicher nicht nutzbar: {error}", error=str(exc)))
+            return
+
+        staged_path = os.path.join(
+            staging_dir, f".lme_stage_{uuid.uuid4().hex}.mkv"
+        )
+        settings["_staged_source"] = staged_path
+
+        title_num = int(settings.get("title_num") or 1)
+        audio_idx = settings.get("audio_stream_idx")
+        sub_idx = settings.get("subtitle_stream_idx")
+
+        if disc_type == optical_media.DiscType.DVD_VIDEO:
+            args, staged_path = optical_media.build_dvd_rip_args(
+                source_path=job["input_file"], title_num=title_num,
+                audio_stream_idx=audio_idx, subtitle_stream_idx=sub_idx,
+                output_file=staged_path, remux_mkv=True,
+            )
+        else:
+            args, staged_path = optical_media.build_bluray_rip_args(
+                source_path=job["input_file"], playlist_num=title_num,
+                audio_stream_idx=audio_idx, subtitle_stream_idx=sub_idx,
+                output_file=staged_path, remux_mkv=True,
+            )
+        settings["_staged_source"] = staged_path
+
+        job["_phase"] = "rip"
+        job["status"] = self._phase_status(job, "Liest Disc...")
+        job["progress"] = 0.0
+        job["time_remaining"] = "Berechnet..."
+        self._update_table_row(self.current_job_idx)
+
+        self.console.append(
+            f"\n[LME DISC] Stufe 1 von 2 — verlustfreies Auslesen nach {staging_dir}"
+            f" (geschaetzt {optical_media.format_bytes(needed)})"
+        )
+        self.console.append("[LME DISC] Befehl: ffmpeg " + " ".join(args) + "\n")
+
+        self.active_worker = FFmpegWorker(
+            job["input_file"], staged_path, args,
+            total_duration=float(settings.get("source_duration") or 0.0) or None,
+        )
+        self.active_worker.progress_updated.connect(self._on_worker_progress)
+        self.active_worker.log_received.connect(self._on_worker_log)
+        self.active_worker.status_changed.connect(self._on_worker_status)
+        self.active_worker.finished.connect(self._on_disc_rip_stage_finished)
+        self.active_worker.start()
+
+    def _on_disc_rip_stage_finished(self, success, message):
+        """Stufe 1 fertig — danach ganz normal konvertieren."""
+        if self.current_job_idx == -1 or self.current_job_idx >= len(self.jobs):
+            return
+        job = self.jobs[self.current_job_idx]
+
+        if not success:
+            self._cleanup_staged_source(job)
+            self._fail_current_job(tr("Auslesen der Disc fehlgeschlagen: {error}", error=message))
+            return
+
+        self.console.append("[LME DISC] Stufe 1 fertig. Stufe 2 von 2 — Konvertierung.")
+        job["progress"] = 0.0
+        self._update_table_row(self.current_job_idx)
+        # Entkoppelt weiterreichen, damit der beendete Worker sauber abgebaut wird.
+        QTimer.singleShot(0, lambda: self._start_current_ffmpeg_job(job))
+
+    def _cleanup_staged_source(self, job):
+        """Entfernt die Zwischendatei eines Disc-Jobs."""
+        settings = job.get("settings") or {}
+        staged = settings.pop("_staged_source", "")
+        if staged and os.path.exists(staged):
+            try:
+                os.remove(staged)
+                self.console.append(f"[LME DISC] Zwischendatei entfernt: {staged}")
+            except OSError as exc:
+                self.console.append(f"[LME DISC] Zwischendatei blieb liegen ({exc}): {staged}")
+
+    def _fail_current_job(self, message):
+        """Markiert den laufenden Job als fehlgeschlagen und macht weiter."""
+        if self.current_job_idx == -1 or self.current_job_idx >= len(self.jobs):
+            return
+        job = self.jobs[self.current_job_idx]
+        job["status"] = "Fehlgeschlagen"
+        job["error_tail"] = str(message)
+        self._run_done += 1
+        self._update_table_row(self.current_job_idx)
+        self.console.append(f"\n[LME FEHLER] {message}")
+        QTimer.singleShot(0, self._process_next_job)
+
+    def _configured_staging_dir(self):
+        """Vom Anwender eingestellter Zwischenspeicher (leer = automatisch)."""
+        return str(self.settings_store.value("staging_dir", "") or "").strip()
 
     def _existing_subtitle_path(self, settings):
         for key in ("temp_srt_path", "subtitles_file_path"):
@@ -2834,7 +2977,24 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._process_next_job)
             return
 
-        job["status"] = "Codiert..."
+        # Liegt eine Zwischendatei vor (Stufe 1 eines Disc-Jobs), wird ab hier
+        # ganz normal aus dieser Datei konvertiert: die Disc-Optionen duerfen
+        # dann NICHT mehr in die Befehlszeile, sonst wuerde FFmpeg erneut das
+        # Laufwerk ansprechen.
+        settings = job["settings"]
+        staged = settings.get("_staged_source", "")
+        if staged and os.path.exists(staged):
+            job["_phase"] = "encode"
+            effective_input = staged
+            effective_settings = {
+                k: v for k, v in settings.items()
+                if k not in ("input_args", "disc_type")
+            }
+        else:
+            effective_input = job["input_file"]
+            effective_settings = settings
+
+        job["status"] = self._phase_status(job, "Codiert...")
         job["progress"] = 0.0
         job["speed"] = "0.0x"
         job["time_remaining"] = "Berechnet..."
@@ -2844,7 +3004,7 @@ class MainWindow(QMainWindow):
 
         self._on_job_selection_changed()
 
-        ffmpeg_args = presets.get_ffmpeg_args(job["input_file"], job["output_file"], job["settings"])
+        ffmpeg_args = presets.get_ffmpeg_args(effective_input, job["output_file"], effective_settings)
 
         self.console.append(f"\n[LME LOGS] Starte Konvertierung von: {os.path.basename(job['input_file'])}")
         self.console.append(f"[LME LOGS] Befehl: ffmpeg " + " ".join(ffmpeg_args) + "\n")
@@ -2861,7 +3021,7 @@ class MainWindow(QMainWindow):
                 expected_duration = end - start
 
         self.active_worker = FFmpegWorker(
-            job["input_file"], job["output_file"], ffmpeg_args,
+            effective_input, job["output_file"], ffmpeg_args,
             total_duration=expected_duration,
         )
         self.active_worker.progress_updated.connect(self._on_worker_progress)
@@ -3128,12 +3288,28 @@ class MainWindow(QMainWindow):
         if self.current_job_idx == -1:
             return
         job = self.jobs[self.current_job_idx]
-        job["status"] = text
+        job["status"] = self._phase_status(job, text)
         self._update_table_row(self.current_job_idx)
+
+    @staticmethod
+    def _phase_status(job, text):
+        """Stellt bei Disc-Jobs die Stufe vor die Meldung des Workers."""
+        phase = job.get("_phase")
+        if not phase:
+            return text
+        label = tr("Stufe 1/2 · Liest Disc") if phase == "rip" else tr("Stufe 2/2 · Konvertiert")
+        # Die Anlaufmeldung des Workers traegt keine eigene Aussage.
+        if str(text).startswith("Initialisiere"):
+            return f"{label}..."
+        return f"{label} · {text}"
 
     def _on_worker_finished(self, success, message):
         if self.current_job_idx != -1:
             job = self.jobs[self.current_job_idx]
+            # Zwischendatei eines Disc-Jobs raeumen — bei Erfolg wie bei
+            # Misserfolg, sonst bleiben zweistellige Gigabytebetraege liegen.
+            self._cleanup_staged_source(job)
+            job.pop("_phase", None)
             self._run_done += 1
             if success:
                 job["status"] = "Fertig"

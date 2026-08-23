@@ -1,3 +1,4 @@
+import tempfile
 import os
 import sys
 import unittest
@@ -97,3 +98,71 @@ class QueueBehaviorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiscTwoStageQueueTest(unittest.TestCase):
+    """Disc-Jobs laufen zweistufig: erst verlustfrei lesen, dann konvertieren."""
+
+    @classmethod
+    def setUpClass(cls):
+        from PyQt6 import QtWidgets
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+
+    def _disc_job(self, staged=None):
+        settings = {
+            "container": "mp4",
+            "input_args": ["-playlist", "3"],
+            "disc_type": "bluray",
+            "title_num": 3,
+        }
+        if staged is not None:
+            settings["_staged_source"] = staged
+        return {
+            "input_file": "/dev/sr0",
+            "output_dir": "/tmp",
+            "output_file": "/tmp/film.mp4",
+            "settings": settings,
+            "status": "Bereit",
+        }
+
+    def test_disc_job_needs_the_rip_stage_first(self):
+        from mainwindow import MainWindow
+        window = MainWindow()
+        self.assertTrue(window._job_needs_disc_rip(self._disc_job()))
+
+    def test_stage_is_skipped_once_the_staged_file_exists(self):
+        from mainwindow import MainWindow
+        window = MainWindow()
+        with tempfile.NamedTemporaryFile(suffix=".mkv") as handle:
+            self.assertFalse(window._job_needs_disc_rip(self._disc_job(handle.name)))
+
+    def test_a_vanished_staged_file_triggers_the_rip_again(self):
+        # Nach einem Neustart zeigt ein alter Pfad ins Leere -- dann muss
+        # erneut gelesen werden statt stillschweigend nichts zu tun.
+        from mainwindow import MainWindow
+        window = MainWindow()
+        self.assertTrue(window._job_needs_disc_rip(self._disc_job("/gibt/es/nicht.mkv")))
+
+    def test_ordinary_file_jobs_are_untouched(self):
+        from mainwindow import MainWindow
+        window = MainWindow()
+        job = {"input_file": "/tmp/a.mp4", "settings": {"container": "mp4"}}
+        self.assertFalse(window._job_needs_disc_rip(job))
+
+    def test_staged_path_never_survives_a_session(self):
+        # Ein Pfad aus dem letzten Lauf wuerde Stufe 1 faelschlich ueberspringen.
+        import presets
+        self.assertIn("_staged_source", presets.TRANSIENT_SETTING_KEYS)
+
+    def test_second_stage_drops_every_disc_option(self):
+        import presets
+        settings = {
+            "container": "mp4", "video_codec": "libx264", "audio_codec": "aac",
+            "input_args": ["-playlist", "3"], "disc_type": "bluray",
+        }
+        wirksam = {k: v for k, v in settings.items() if k not in ("input_args", "disc_type")}
+        args = presets.get_ffmpeg_args("/var/tmp/stage.mkv", "/tmp/film.mp4", wirksam)
+        zeile = " ".join(args)
+        self.assertNotIn("-playlist", zeile)
+        self.assertNotIn("bluray:", zeile)
+        self.assertIn("/var/tmp/stage.mkv", zeile)

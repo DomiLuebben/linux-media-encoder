@@ -9,6 +9,12 @@ with Python 3 and PyQt6.
 
 ## Features
 
+- **Two-stage ripping**: DVDs and Blu-rays are first read losslessly into a staging folder and
+  converted from there afterwards, so the drive only runs during the short read instead of the
+  entire conversion. Both stages show progress, speed and remaining time ("Step 1/2 · Reading
+  disc", "Step 2/2 · Converting"). LME picks the staging folder itself based on free space —
+  `/tmp` is a RAM-backed tmpfs on many systems and is unsuitable for a 30 GB remux; a custom
+  folder can be set in the ripper.
 - **CD / DVD / BD Ripper (Ctrl+D)**: Read and rip Audio CDs (with CD-Text metadata to FLAC/MP3/AAC/Opus), DVD-Video (with title and audio/subtitle stream selection to MKV or queue), Blu-ray Discs (with playlist inspection), and 1:1 ISO backups
 - Multi-job queue with drag-and-drop file and disc/ISO image support
 - AME-style export dialog with source preview and metadata from `ffprobe`

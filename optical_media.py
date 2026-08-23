@@ -109,6 +109,7 @@ class VideoTitleInfo:
     fps: float = 25.0
     aspect_ratio: str = "16:9"
     video_codec: str = "mpeg2video"
+    bitrate_bps: int = 0
     audio_streams: List[AudioStreamInfo] = field(default_factory=list)
     subtitle_streams: List[SubtitleStreamInfo] = field(default_factory=list)
     is_main_feature: bool = False
@@ -609,7 +610,11 @@ def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 15) -> DiscInsp
             data = json.loads(res.stdout)
             fmt = data.get("format", {})
             duration = float(fmt.get("duration", 0.0) or 0.0)
-            
+            try:
+                bitrate = int(fmt.get("bit_rate") or 0)
+            except (TypeError, ValueError):
+                bitrate = 0
+
             width, height, fps = 720, 576, 25.0
             aspect = "16:9"
             v_codec = "mpeg2video"
@@ -670,6 +675,7 @@ def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 15) -> DiscInsp
                 fps=fps,
                 aspect_ratio=aspect,
                 video_codec=v_codec,
+                bitrate_bps=bitrate,
                 audio_streams=audio_streams,
                 subtitle_streams=sub_streams,
                 name=f"Titel {title_num:02d}",
@@ -810,7 +816,12 @@ def _probe_bluray_playlist(
     except (subprocess.SubprocessError, OSError, ValueError):
         return None
 
-    duration = float((data.get("format") or {}).get("duration", 0.0) or 0.0)
+    fmt = data.get("format") or {}
+    duration = float(fmt.get("duration", 0.0) or 0.0)
+    try:
+        bitrate = int(fmt.get("bit_rate") or 0)
+    except (TypeError, ValueError):
+        bitrate = 0
     width, height, fps = 1920, 1080, 23.976
     v_codec = "h264"
     audio_streams: List[AudioStreamInfo] = []
@@ -875,6 +886,7 @@ def _probe_bluray_playlist(
         fps=fps,
         aspect_ratio="16:9",
         video_codec=v_codec,
+        bitrate_bps=bitrate,
         audio_streams=audio_streams,
         subtitle_streams=sub_streams,
         name=name,
@@ -1155,6 +1167,120 @@ def build_iso_dump_command(
     if block_count and block_count > 0:
         cmd.append(f"count={block_count}")
     return cmd
+
+
+# --- ZWISCHENSPEICHER FÜR DEN ZWEISTUFIGEN RIP ---
+#
+# Eine Disc wird erst verlustfrei ausgelesen und danach aus der Zwischendatei
+# konvertiert. Das Laufwerk ist damit nach wenigen Minuten frei, statt über die
+# ganze (oft stundenlange) Umwandlung hinweg zu laufen — und ein Lesefehler
+# kostet nicht den kompletten Durchgang.
+#
+# Der Ort dafür darf NICHT blind /tmp sein: auf vielen Systemen ist das ein
+# tmpfs und liegt damit im Arbeitsspeicher. Ein Blu-ray-Remux von 30+ GB würde
+# dort den RAM auffressen. Deshalb wird nach freiem Platz ausgewählt.
+
+# Fallback-Datenraten, wenn die Quelle keine meldet (Bit pro Sekunde).
+_FALLBACK_BITRATE = {
+    DiscType.BLURAY: 40_000_000,
+    DiscType.DVD_VIDEO: 9_800_000,
+}
+STAGING_MARGIN = 1.15   # Sicherheitszuschlag auf die Schätzung
+
+
+def estimate_remux_bytes(
+    duration_sec: float,
+    bitrate_bps: Optional[int] = None,
+    disc_type: Optional[DiscType] = None,
+) -> int:
+    """Schätzt die Größe eines verlustfreien Auslesevorgangs in Bytes."""
+    duration = max(0.0, float(duration_sec or 0.0))
+    if not duration:
+        return 0
+    rate = int(bitrate_bps or 0)
+    if rate <= 0:
+        rate = _FALLBACK_BITRATE.get(disc_type or DiscType.BLURAY, 40_000_000)
+    return int(duration * rate / 8.0)
+
+
+def staging_candidates(
+    preferred: Optional[str] = None,
+    output_dir: Optional[str] = None,
+) -> List[str]:
+    """Mögliche Orte für die Zwischendatei, in der Reihenfolge der Eignung.
+
+    Zuerst der ausdrücklich eingestellte Ordner, dann TMPDIR, dann der
+    Zielordner (den hat der Anwender selbst gewählt, dort ist meist Platz),
+    danach die üblichen Ablagen. /tmp steht bewusst zuletzt.
+    """
+    candidates: List[str] = []
+
+    def add(path: Optional[str]) -> None:
+        if not path:
+            return
+        expanded = os.path.abspath(os.path.expanduser(str(path)))
+        if expanded not in candidates:
+            candidates.append(expanded)
+
+    add(preferred)
+    add(os.environ.get("TMPDIR"))
+    add(output_dir)
+    add(os.path.join(
+        os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+        "linux-media-encoder",
+    ))
+    add("/var/tmp")
+    add("/tmp")
+    return candidates
+
+
+def free_space(path: str) -> int:
+    """Freier Platz am nächstgelegenen vorhandenen Elternverzeichnis (Bytes)."""
+    probe = os.path.abspath(os.path.expanduser(path or "."))
+    while probe and not os.path.isdir(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return 0
+        probe = parent
+    try:
+        return shutil.disk_usage(probe).free
+    except OSError:
+        return 0
+
+
+def choose_staging_dir(
+    needed_bytes: int,
+    preferred: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    margin: float = STAGING_MARGIN,
+) -> Tuple[Optional[str], List[Tuple[str, int]]]:
+    """Wählt einen Zwischenspeicher mit genug Platz.
+
+    Gibt (Ordner oder None, [(Kandidat, freier Platz), …]) zurück. Die Liste
+    dient der Fehlermeldung: ohne konkrete Zahlen kann niemand entscheiden,
+    was zu tun ist.
+    """
+    required = int(max(0, needed_bytes) * margin)
+    report: List[Tuple[str, int]] = []
+    chosen: Optional[str] = None
+
+    for candidate in staging_candidates(preferred, output_dir):
+        available = free_space(candidate)
+        report.append((candidate, available))
+        if chosen is None and available >= required:
+            chosen = candidate
+
+    return chosen, report
+
+
+def format_bytes(value: int) -> str:
+    """Größenangabe in einer für Menschen lesbaren Form."""
+    size = float(max(0, int(value)))
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024.0 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} TB"
 
 
 def get_optical_media_size(device_path: str) -> int:

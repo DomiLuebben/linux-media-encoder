@@ -30,6 +30,11 @@ from optical_media import (
     build_audio_encode_args,
     build_iso_dump_command,
     get_optical_media_size,
+    estimate_remux_bytes,
+    staging_candidates,
+    choose_staging_dir,
+    format_bytes,
+    STAGING_MARGIN,
     check_dvd_encryption_support,
     check_bluray_encryption_support,
     find_aacs_keydb,
@@ -139,6 +144,69 @@ libaacs detected    : no
 AACS handled        : no
 BD+ detected        : no
 """
+
+class StagingTest(unittest.TestCase):
+    """Zweistufiger Rip: erst verlustfrei zwischenspeichern, dann konvertieren."""
+
+    def test_size_estimate_uses_bitrate_or_a_fallback(self):
+        # 100 s bei 40 Mbit/s = 500 MB
+        self.assertEqual(estimate_remux_bytes(100.0, 40_000_000), 500_000_000)
+        # Ohne Datenrate greift der Ruecktfall je Medienart.
+        self.assertEqual(
+            estimate_remux_bytes(100.0, 0, DiscType.DVD_VIDEO),
+            int(100.0 * 9_800_000 / 8),
+        )
+        self.assertEqual(estimate_remux_bytes(0.0, 40_000_000), 0)
+
+    def test_candidate_order_and_deduplication(self):
+        cands = staging_candidates(preferred="/eigener/ordner", output_dir="/ziel")
+        self.assertEqual(cands[0], "/eigener/ordner")
+        self.assertIn("/ziel", cands)
+        # /tmp steht zuletzt: auf vielen Systemen ist es ein tmpfs im RAM.
+        self.assertEqual(cands[-1], "/tmp")
+        self.assertEqual(len(cands), len(set(cands)))
+
+        doppelt = staging_candidates(preferred="/gleich", output_dir="/gleich")
+        self.assertEqual(doppelt.count("/gleich"), 1)
+
+    def test_too_small_candidate_is_skipped_in_favour_of_the_next(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            klein = os.path.join(tmpdir, "klein")
+            gross = os.path.join(tmpdir, "gross")
+            os.makedirs(klein); os.makedirs(gross)
+
+            def fake_free(path):
+                return 1_000 if path == klein else 10_000_000_000
+
+            with patch("optical_media.free_space", side_effect=fake_free):
+                chosen, report = choose_staging_dir(
+                    1_000_000_000, preferred=klein, output_dir=gross
+                )
+            self.assertEqual(chosen, gross)
+            self.assertEqual(report[0], (klein, 1_000))
+
+    def test_nothing_fits_reports_every_candidate(self):
+        with patch("optical_media.free_space", return_value=0):
+            chosen, report = choose_staging_dir(1_000_000_000, preferred="/a", output_dir="/b")
+        self.assertIsNone(chosen)
+        self.assertTrue(report)
+        self.assertTrue(all(free == 0 for _, free in report))
+
+    def test_margin_is_applied_to_the_estimate(self):
+        # Genau die Schaetzung reicht NICHT -- der Zuschlag fehlt.
+        with patch("optical_media.free_space", return_value=1_000_000):
+            chosen, _ = choose_staging_dir(1_000_000, preferred="/a")
+        self.assertIsNone(chosen)
+
+        with patch("optical_media.free_space", return_value=int(1_000_000 * STAGING_MARGIN)):
+            chosen, _ = choose_staging_dir(1_000_000, preferred="/a")
+        self.assertEqual(chosen, "/a")
+
+    def test_format_bytes_is_readable(self):
+        self.assertEqual(format_bytes(512), "512 B")
+        self.assertEqual(format_bytes(1536), "1.5 KB")
+        self.assertEqual(format_bytes(32 * 1024 ** 3), "32.0 GB")
+
 
 class OpticalMediaCoreTest(unittest.TestCase):
 
