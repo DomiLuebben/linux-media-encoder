@@ -43,7 +43,8 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 > depuis les sources via `libdvd-pkg` ; l’étape debconf nécessaire est pré-répondue et s’exécute
 > dans le même appel privilégié, de sorte que la demande de mot de passe n’apparaît qu’une fois.
 > Cela nécessite une connexion Internet et prend quelques minutes ; la progression s’affiche dans
-> le journal.
+> le journal. Sur Fedora, LME vérifie si RPM Fusion (free) est configuré ; si ce n’est pas le
+> cas, un message invite à le configurer — les autres composants sont installés malgré tout.
 
 > **Blu-ray protégés :** LME ne fournit aucune clé de déchiffrement et n’en télécharge aucune. Les
 > disques non chiffrés et les dossiers BDMV fonctionnent tels quels. Pour les disques protégés par

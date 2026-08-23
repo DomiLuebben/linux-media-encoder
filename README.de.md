@@ -52,6 +52,8 @@ geschrieben in Python 3 mit PyQt6.
 > aus dem Quelltext gebaut; der dafür nötige debconf-Schritt läuft vorbeantwortet im selben
 > privilegierten Aufruf, sodass die Kennwortabfrage nur einmal erscheint. Das braucht eine
 > Internetverbindung und dauert einige Minuten; der Fortschritt steht im Protokoll.
+> Unter Fedora prüft LME, ob RPM Fusion (free) eingerichtet ist; ist es das nicht, erscheint ein
+> Hinweis mit der Bitte, es einzurichten — die übrigen Komponenten werden trotzdem installiert.
 
 > **Kopiergeschützte Blu-rays:** LME bringt keine Entschlüsselungsschlüssel mit und lädt auch keine
 > herunter. Unverschlüsselte Discs und BDMV-Ordner funktionieren ohne Zusatz. Für AACS-geschützte

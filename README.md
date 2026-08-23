@@ -50,6 +50,8 @@ with Python 3 and PyQt6.
 > Ubuntu and Mint, libdvdcss is built from source via `libdvd-pkg`; the required debconf step is
 > pre-answered and runs inside the same privileged call, so the password prompt appears only
 > once. It needs an internet connection and takes a few minutes; progress is shown in the log.
+> On Fedora, LME checks whether RPM Fusion (free) is set up; if it is not, a notice asks you to
+> set it up — all other components are still installed.
 
 > **Copy-protected Blu-rays:** LME ships no decryption keys and downloads none. Unencrypted discs
 > and BDMV folders work out of the box. For AACS-protected discs, `libaacs` looks for a `KEYDB.cfg`
