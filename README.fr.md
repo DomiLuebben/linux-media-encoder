@@ -32,6 +32,15 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 - FFmpeg avec `ffprobe`, disponible dans le `PATH`
 - *Facultatif (pour les disques optiques)* : `cdparanoia` (CD audio), `lsdvd` (structures DVD), `libbluray` (listes de lecture Blu-ray), `libdvdcss` (DVD chiffrés), `libaacs` (Blu-ray chiffrés)
 
+> **Installation des composants manquants :** à son ouverture, la boîte de dialogue vérifie quels
+> outils et bibliothèques facultatifs sont présents et propose un bouton « Installer les composants
+> manquants… ». La famille de distribution est déduite de `ID` et `ID_LIKE` dans `/etc/os-release`
+> (ce qui couvre aussi les dérivés comme CachyOS, EndeavourOS, Garuda, Linux Mint, TUXEDO OS,
+> Pop!_OS, Bazzite ou Nobara) et l’authentification passe par `pkexec`. La commande complète est
+> affichée avant exécution. Les paquets introuvables sur le système sont ignorés et signalés
+> individuellement plutôt que de faire échouer toute l’opération. LME n’active pas de sources
+> tierces (RPM Fusion, AUR) de lui-même.
+
 > **Blu-ray protégés :** LME ne fournit aucune clé de déchiffrement et n’en télécharge aucune. Les
 > disques non chiffrés et les dossiers BDMV fonctionnent tels quels. Pour les disques protégés par
 > AACS, `libaacs` cherche un fichier `KEYDB.cfg` dans `$XDG_CONFIG_HOME/aacs/` (par défaut

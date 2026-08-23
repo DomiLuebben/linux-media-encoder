@@ -40,6 +40,16 @@ geschrieben in Python 3 mit PyQt6.
 - `ffmpeg` (inkl. `ffprobe`) im `PATH`
 - *Optional (für optische Datenträger)*: `cdparanoia` (Audio-CDs), `lsdvd` (DVD-Strukturen), `libbluray` (Blu-ray-Playlists), `libdvdcss` (CSS-DVDs), `libaacs` (AACS-Blu-rays)
 
+> **Fehlende Komponenten nachinstallieren:** Der Ripper-Dialog prüft beim Öffnen, welche der
+> optionalen Werkzeuge und Bibliotheken auf dem System vorhanden sind, und bietet eine
+> Schaltfläche „Fehlende Komponenten installieren…“ an. Die Distributionsfamilie wird aus `ID`
+> und `ID_LIKE` in `/etc/os-release` abgeleitet (deckt damit auch Ableger wie CachyOS,
+> EndeavourOS, Garuda, Linux Mint, TUXEDO OS, Pop!_OS, Bazzite oder Nobara ab), die
+> Kennwortabfrage läuft grafisch über `pkexec`. Vor dem Ausführen wird der vollständige Befehl
+> angezeigt. Pakete, die auf dem System nicht auffindbar sind, werden übersprungen und einzeln
+> benannt, statt den ganzen Lauf scheitern zu lassen. Fremdquellen (RPM Fusion, AUR) schaltet
+> LME nicht eigenmächtig frei.
+
 > **Kopiergeschützte Blu-rays:** LME bringt keine Entschlüsselungsschlüssel mit und lädt auch keine
 > herunter. Unverschlüsselte Discs und BDMV-Ordner funktionieren ohne Zusatz. Für AACS-geschützte
 > Discs sucht `libaacs` eine `KEYDB.cfg` unter `$XDG_CONFIG_HOME/aacs/` (Vorgabe `~/.config/aacs/`)

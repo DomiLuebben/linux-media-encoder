@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from typing import Any, List, Optional
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QProcess, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -26,6 +26,7 @@ from i18n import (
 )
 
 import optical_media
+import dependency_installer
 from optical_media import (
     DiscType,
     OpticalDriveInfo,
@@ -132,11 +133,22 @@ class DiscRipperDialog(QDialog):
         # Dauerhafte Systemprüfung: sichtbar, sobald der Dialog aufgeht, also
         # auch ohne eingelegtes Medium. Der Tooltip führt jede Komponente
         # einzeln mit Zweck und Zustand auf.
+        env_row = QHBoxLayout()
+        env_row.setSpacing(8)
+
         self.lbl_env_notice = QLabel("")
         self.lbl_env_notice.setStyleSheet("color: #ffaa00; font-style: italic;")
         self.lbl_env_notice.setVisible(False)
         self.lbl_env_notice.setWordWrap(True)
-        main_layout.addWidget(self.lbl_env_notice)
+        env_row.addWidget(self.lbl_env_notice, 1)
+
+        self.btn_install_deps = QPushButton(tr("Fehlende Komponenten installieren..."))
+        self.btn_install_deps.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        self.btn_install_deps.clicked.connect(self._on_install_dependencies_clicked)
+        self.btn_install_deps.setVisible(False)
+        env_row.addWidget(self.btn_install_deps, 0)
+
+        main_layout.addLayout(env_row)
 
         self.lbl_warn_encryption = QLabel("")
         self.lbl_warn_encryption.setStyleSheet("color: #ffaa00; font-style: italic;")
@@ -897,7 +909,16 @@ class DiscRipperDialog(QDialog):
         missing = [component for component in components if not component.available]
         if not missing:
             self.lbl_env_notice.setVisible(False)
+            self.btn_install_deps.setVisible(False)
             return
+
+        # Der Knopf erscheint nur, wenn wirklich etwas automatisch zu holen ist.
+        plan = dependency_installer.plan_installation([c.key for c in missing])
+        self._install_plan = plan
+        self.btn_install_deps.setVisible(plan.has_work)
+        self.btn_install_deps.setEnabled(
+            plan.has_work and dependency_installer.graphical_sudo_available()
+        )
 
         names = ", ".join(component.name for component in missing)
         if any(component.is_blocking for component in missing):
@@ -913,6 +934,113 @@ class DiscRipperDialog(QDialog):
             )
         self.lbl_env_notice.setText(text)
         self.lbl_env_notice.setVisible(True)
+
+    def _on_install_dependencies_clicked(self):
+        """Installiert die fehlenden Komponenten mit grafischer Kennwortabfrage."""
+        plan = getattr(self, "_install_plan", None)
+        if plan is None or not plan.has_work:
+            return
+
+        if not dependency_installer.graphical_sudo_available():
+            QMessageBox.warning(
+                self,
+                tr("Grafische Rechteabfrage nicht verfügbar"),
+                tr(
+                    "Für die Installation wird pkexec (polkit) benötigt, es ist auf diesem "
+                    "System nicht vorhanden. Bitte den folgenden Befehl im Terminal ausführen:"
+                    "\n\n{command}",
+                    command=" ".join(plan.command[1:]),
+                ),
+            )
+            return
+
+        details = tr(
+            "Erkanntes System: {distro}\n\nFolgende Pakete werden installiert:\n{packages}"
+            "\n\nAusgeführter Befehl:\n{command}\n\nDie Rechteabfrage erscheint gleich in "
+            "einem eigenen Fenster.",
+            distro=plan.distro_name or "-",
+            packages="  " + "\n  ".join(plan.packages),
+            command=" ".join(plan.command),
+        )
+        notes = [tr(note) for note in plan.manual_notes]
+        if plan.unresolved:
+            notes.append(tr(
+                "Für diese Komponenten ist auf diesem System kein passendes Paket "
+                "auffindbar: {names}",
+                names=", ".join(plan.unresolved),
+            ))
+        if notes:
+            details += "\n\n" + tr("Nicht automatisch erledigt:") + "\n- " + "\n- ".join(notes)
+        if plan.needs_reboot:
+            details += "\n\n" + tr(
+                "Dieses System ist unveränderlich (rpm-ostree). Sollte die Änderung nicht "
+                "sofort greifen, ist ein Neustart nötig."
+            )
+
+        answer = QMessageBox.question(
+            self,
+            tr("Fehlende Komponenten installieren"),
+            details,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        self.btn_install_deps.setEnabled(False)
+        self.txt_log.append(tr("Starte Installation: {command}", command=" ".join(plan.command)))
+        self.lbl_status.setText(tr("Installiere fehlende Komponenten..."))
+
+        self._install_process = QProcess(self)
+        self._install_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self._install_process.readyReadStandardOutput.connect(self._on_install_output)
+        self._install_process.finished.connect(self._on_install_finished)
+        self._install_process.start(plan.command[0], plan.command[1:])
+
+    def _on_install_output(self):
+        data = self._install_process.readAllStandardOutput().data().decode("utf-8", errors="replace")
+        for line in data.splitlines():
+            if line.strip():
+                self.txt_log.append(line.rstrip())
+
+    def _on_install_finished(self, exit_code: int, exit_status):
+        self._install_process = None
+        # Zustand neu erheben, statt vom Erfolg auszugehen: das ist die einzige
+        # Aussage, die wirklich zählt.
+        self._update_environment_notice()
+        still_missing = optical_media.missing_optical_components()
+
+        if exit_code == 0 and not still_missing:
+            self.lbl_status.setText(tr("Bereit"))
+            QMessageBox.information(
+                self,
+                tr("Installation abgeschlossen"),
+                tr("Alle Komponenten für optische Medien sind jetzt vorhanden."),
+            )
+        elif exit_code == 0:
+            self.lbl_status.setText(tr("Bereit"))
+            QMessageBox.information(
+                self,
+                tr("Installation abgeschlossen"),
+                tr(
+                    "Die Installation lief durch. Es fehlen weiterhin: {names}\n\n"
+                    "Einzelheiten stehen im Tooltip des Hinweises.",
+                    names=", ".join(component.name for component in still_missing),
+                ),
+            )
+        else:
+            self.lbl_status.setText(tr("Bereit"))
+            QMessageBox.warning(
+                self,
+                tr("Installation fehlgeschlagen"),
+                tr(
+                    "Die Installation wurde abgebrochen oder ist fehlgeschlagen "
+                    "(Rückgabewert {code}). Einzelheiten stehen im Protokoll.",
+                    code=exit_code,
+                ),
+            )
+        self.btn_install_deps.setEnabled(
+            bool(getattr(self, "_install_plan", None) and self._install_plan.has_work)
+        )
 
     def _on_worker_progress(self, pct: float, speed: str, eta: str):
         self.prog_bar.setValue(int(pct))

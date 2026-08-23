@@ -96,6 +96,48 @@ class LocalizedWidgetTest(unittest.TestCase):
             )
             dialog.close()
 
+    def test_dependency_install_dialog_translations_complete(self):
+        """Der Bau-Wächter oben sieht nur Texte, die beim Aufbau entstehen.
+
+        Die Meldungen der Installationsroutine fallen erst beim Klick an und
+        wären sonst unbemerkt unübersetzt geblieben.
+        """
+        from unittest.mock import patch
+
+        import dependency_installer
+        from disc_ripper_dialog import DiscRipperDialog
+        from i18n import clear_missing_translations, missing_translations
+
+        plan = dependency_installer.InstallPlan(
+            family=dependency_installer.DistroFamily.ARCH,
+            distro_name="Testsystem",
+            is_immutable=True,
+            packages=["lsdvd", "libaacs"],
+            command=["pkexec", "pacman", "-S", "--needed", "--noconfirm", "lsdvd", "libaacs"],
+            manual_notes=list(dependency_installer._MANUAL_NOTES.values())
+            + list(dependency_installer._FFMPEG_BUILD_OPTIONS.values()),
+            unresolved=["libbdplus"],
+            needs_reboot=True,
+        )
+
+        for loc in ("en_US", "fr_FR"):
+            set_locale(loc)
+            dialog = DiscRipperDialog()
+            dialog._install_plan = plan
+            clear_missing_translations()
+
+            with patch("disc_ripper_dialog.QMessageBox.question",
+                       return_value=QtWidgets.QMessageBox.StandardButton.Cancel) as ask:
+                dialog._on_install_dependencies_clicked()
+                self.assertTrue(ask.called)
+
+            self.assertEqual(
+                missing_translations(),
+                set(),
+                f"Fehlende Übersetzungen im Installationsdialog unter {loc}: {missing_translations()}",
+            )
+            dialog.close()
+
 
 if __name__ == "__main__":
     unittest.main()
