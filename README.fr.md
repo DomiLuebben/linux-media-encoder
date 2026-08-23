@@ -45,6 +45,12 @@ d’Adobe Media Encoder et développée avec Python 3 et PyQt6.
 > Cela nécessite une connexion Internet et prend quelques minutes ; la progression s’affiche dans
 > le journal. Sur Fedora, LME vérifie si RPM Fusion (free) est configuré ; si ce n’est pas le
 > cas, un message invite à le configurer — les autres composants sont installés malgré tout.
+> Sur Arch, c’est `pacman -Si`, et donc l’état réel de la machine, qui détermine si un paquet
+> provient d’un dépôt configuré ou uniquement de l’AUR : CachyOS, EndeavourOS et Garuda
+> proposent beaucoup de paquets dans leurs propres dépôts, ce qui est reconnu comme tel. La
+> boîte de confirmation indique le dépôt d’origine de chaque paquet. Ce qui reste introuvable est
+> signalé comme un cas AUR — LME ne compile aucun paquet AUR, mais indique la commande
+> appropriée si un assistant AUR est présent.
 
 > **Blu-ray protégés :** LME ne fournit aucune clé de déchiffrement et n’en télécharge aucune. Les
 > disques non chiffrés et les dossiers BDMV fonctionnent tels quels. Pour les disques protégés par

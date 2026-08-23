@@ -177,12 +177,18 @@ _FFMPEG_BUILD_OPTIONS = {
               "Nötig ist ein FFmpeg-Paket, das damit gebaut wurde.",
 }
 
-# Fälle, die bewusst NICHT automatisch erledigt werden.
-_MANUAL_NOTES: Dict[Tuple[DistroFamily, str], str] = {
-    (DistroFamily.ARCH, "libbdplus"):
-        "libbdplus liegt bei Arch und seinen Ablegern nur im AUR. LME baut keine "
-        "AUR-Pakete; bitte mit einem AUR-Helfer nachinstallieren.",
-}
+# Fälle, die bewusst NICHT automatisch erledigt werden. Der AUR-Fall steht
+# absichtlich NICHT hier: welches Paket im AUR liegt, unterscheidet sich je
+# Arch-Ableger (CachyOS führt vieles in eigenen Quellen) und wird deshalb aus
+# der tatsächlichen pacman-Abfrage abgeleitet, nicht aufgelistet.
+_MANUAL_NOTES: Dict[Tuple[DistroFamily, str], str] = {}
+
+AUR_ONLY_NOTE = (
+    "Diese Komponenten sind in keiner auf diesem System eingerichteten Paketquelle "
+    "enthalten und damit nur über das AUR erhältlich. LME baut grundsätzlich keine "
+    "AUR-Pakete: dabei würde fremder Bauplan-Quelltext auf dem Rechner ausgeführt, "
+    "und makepkg verweigert ohnehin den Lauf mit Administratorrechten."
+)
 
 
 @dataclass
@@ -202,6 +208,12 @@ class InstallPlan:
     needs_reboot: bool = False
     # Fedora ohne RPM Fusion: eigener Hinweisdialog statt stillem Fehlschlag.
     needs_rpmfusion: bool = False
+    # Arch: vorhandener AUR-Helfer, damit der Hinweis einen konkreten
+    # Befehl nennen kann statt „nimm irgendeinen Helfer".
+    aur_helper: Optional[str] = None
+    # Paket -> Quelle, aus der es kommt (Arch). Macht sichtbar, dass
+    # z. B. CachyOS vieles aus eigenen Quellen liefert.
+    repositories: Dict[str, str] = field(default_factory=dict)
 
     @property
     def has_work(self) -> bool:
@@ -369,10 +381,56 @@ def plan_installation(
             "einige Minuten dauern; der Fortschritt steht im Protokoll."
         )
 
+    if info.family == DistroFamily.ARCH:
+        for name in chosen:
+            repository = arch_package_repository(name, runner)
+            if repository:
+                plan.repositories[name] = repository
+        if plan.unresolved:
+            plan.manual_notes.append(AUR_ONLY_NOTE)
+            plan.aur_helper = find_aur_helper()
+
     plan.packages = chosen
     plan.command = build_install_command(info.family, chosen, info.is_immutable)
     plan.needs_reboot = bool(chosen) and info.is_immutable
     return plan
+
+
+# Reihenfolge = Vorzug bei der Empfehlung.
+_AUR_HELPERS = ("paru", "yay", "pikaur", "trizen", "aurman")
+
+
+def find_aur_helper() -> Optional[str]:
+    """Name eines vorhandenen AUR-Helfers (oder None)."""
+    for name in _AUR_HELPERS:
+        if shutil.which(name):
+            return name
+    return None
+
+
+def arch_package_repository(package: str, runner: Callable = _run) -> Optional[str]:
+    """Paketquelle, aus der ein Paket stammt — None heißt: in keiner enthalten.
+
+    Das beantwortet die Frage „Repo oder AUR?" ohne jede distributionsabhängige
+    Liste: `pacman -Si` befragt genau die auf DIESEM System eingerichteten
+    Quellen. Auf CachyOS sind das auch `cachyos`/`cachyos-extra-*`, auf einem
+    System mit Chaotic-AUR eben auch dieses. Das AUR selbst kennt pacman nicht —
+    „nirgends gefunden" ist also gleichbedeutend mit „nur über das AUR".
+
+    `env LC_ALL=C` ist nicht schmückendes Beiwerk: pacman übersetzt die
+    Feldnamen ("Repositorium" auf einem deutschen System), ein Parser auf
+    "Repository" liefe sonst je nach Spracheinstellung ins Leere.
+    """
+    code, out = runner(["env", "LC_ALL=C", "pacman", "-Si", package])
+    if code != 0 or not out:
+        return None
+    for line in out.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key.strip().lower() == "repository":
+            return value.strip() or None
+    return None
 
 
 def rpmfusion_free_enabled(

@@ -984,7 +984,10 @@ class DiscRipperDialog(QDialog):
             "\n\nAusgeführter Befehl:\n{command}\n\nDie Rechteabfrage erscheint gleich in "
             "einem eigenen Fenster.",
             distro=plan.distro_name or "-",
-            packages="  " + "\n  ".join(plan.packages),
+            packages="  " + "\n  ".join(
+                f"{name} ({plan.repositories[name]})" if name in plan.repositories else name
+                for name in plan.packages
+            ),
             command=dependency_installer.command_for_display(plan.command),
         )
         if plan.info_notes:
@@ -999,6 +1002,21 @@ class DiscRipperDialog(QDialog):
                 "auffindbar: {names}",
                 names=", ".join(plan.unresolved),
             ))
+            if plan.family == dependency_installer.DistroFamily.ARCH:
+                aur_names = " ".join(
+                    dependency_installer.COMPONENT_PACKAGES[plan.family].get(key, (key,))[0]
+                    for key in plan.unresolved
+                )
+                if plan.aur_helper:
+                    notes.append(tr(
+                        "Von Hand ginge das mit dem vorhandenen AUR-Helfer: {helper} -S {names}",
+                        helper=plan.aur_helper,
+                        names=aur_names,
+                    ))
+                else:
+                    notes.append(tr(
+                        "Auf diesem System ist kein AUR-Helfer installiert (etwa paru oder yay)."
+                    ))
         if notes:
             details += "\n\n" + tr("Nicht automatisch erledigt:") + "\n- " + "\n- ".join(notes)
         if plan.needs_reboot:

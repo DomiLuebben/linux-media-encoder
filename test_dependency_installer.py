@@ -8,6 +8,7 @@ Kein Test ruft einen echten Paketverwalter auf: die Abfrage wird über den
 import os
 import tempfile
 import unittest
+import unittest.mock
 
 from dependency_installer import (
     DistroFamily,
@@ -22,6 +23,9 @@ from dependency_installer import (
     parse_os_release,
     plan_installation,
     rpmfusion_free_enabled,
+    arch_package_repository,
+    find_aur_helper,
+    AUR_ONLY_NOTE,
 )
 
 
@@ -193,6 +197,52 @@ class RpmFusionTest(unittest.TestCase):
             self.assertTrue(rpmfusion_free_enabled(lambda cmd, timeout=60: (127, ""), tmpdir))
 
 
+class ArchRepositoryTest(unittest.TestCase):
+
+    # pacman uebersetzt die Feldnamen. Ohne LC_ALL=C liefe ein Parser auf
+    # "Repository" auf einem deutschen System ins Leere.
+    PACMAN_SI_EN = (
+        "Repository      : cachyos-extra-znver4\n"
+        "Name            : lsdvd\n"
+        "Version         : 0.21-1.1\n"
+    )
+    PACMAN_SI_DE = (
+        "Repositorium             : extra\n"
+        "Name                     : lsdvd\n"
+    )
+
+    def test_repository_is_read_from_pacman_output(self):
+        calls = []
+
+        def runner(cmd, timeout=60):
+            calls.append(cmd)
+            return 0, self.PACMAN_SI_EN
+
+        self.assertEqual(arch_package_repository("lsdvd", runner), "cachyos-extra-znver4")
+        # Die Sprachfestlegung muss im Aufruf stehen, sonst ist das Ergebnis
+        # von der Spracheinstellung des Rechners abhaengig.
+        self.assertEqual(calls[0][:3], ["env", "LC_ALL=C", "pacman"])
+
+    def test_localized_output_without_lc_all_is_not_parsed(self):
+        # Belegt, warum LC_ALL=C noetig ist: die deutsche Fassung trifft nicht.
+        self.assertIsNone(arch_package_repository("lsdvd", lambda cmd, timeout=60: (0, self.PACMAN_SI_DE)))
+
+    def test_unknown_package_has_no_repository(self):
+        self.assertIsNone(arch_package_repository("libbdplus", lambda cmd, timeout=60: (1, "")))
+
+    def test_find_aur_helper_picks_the_first_available(self):
+        import dependency_installer
+
+        with unittest.mock.patch.object(
+            dependency_installer.shutil, "which",
+            side_effect=lambda name: "/usr/bin/yay" if name == "yay" else None,
+        ):
+            self.assertEqual(find_aur_helper(), "yay")
+
+        with unittest.mock.patch.object(dependency_installer.shutil, "which", return_value=None):
+            self.assertIsNone(find_aur_helper())
+
+
 class InstallPlanTest(unittest.TestCase):
 
     def _arch(self, immutable=False):
@@ -214,7 +264,35 @@ class InstallPlanTest(unittest.TestCase):
         self.assertEqual(plan.unresolved, ["libbdplus"])
         self.assertIn("lsdvd", plan.command)
         self.assertNotIn("libbdplus", plan.command)
-        self.assertTrue(any("AUR" in note for note in plan.manual_notes))
+        self.assertIn(AUR_ONLY_NOTE, plan.manual_notes)
+
+    def test_aur_warning_is_derived_not_hardcoded(self):
+        # Welches Paket im AUR liegt, unterscheidet sich je Ableger. Hier ist
+        # ausgerechnet lsdvd nicht in den Quellen, libbdplus dagegen schon --
+        # der Hinweis muss der tatsaechlichen Abfrage folgen.
+        def runner(cmd, timeout=60):
+            if cmd[-1] == "lsdvd":
+                return 1, ""
+            if cmd[:2] == ["env", "LC_ALL=C"]:
+                return 0, "Repository      : eigene-quelle\nName            : libbdplus\n"
+            return 0, ""
+
+        plan = plan_installation(["lsdvd", "libbdplus"], self._arch(), runner)
+        self.assertEqual(plan.unresolved, ["lsdvd"])
+        self.assertEqual(plan.packages, ["libbdplus"])
+        self.assertEqual(plan.repositories, {"libbdplus": "eigene-quelle"})
+        self.assertIn(AUR_ONLY_NOTE, plan.manual_notes)
+
+    def test_no_aur_note_when_everything_resolves(self):
+        def runner(cmd, timeout=60):
+            if cmd[:2] == ["env", "LC_ALL=C"]:
+                return 0, "Repository      : cachyos-extra-znver4\n"
+            return 0, ""
+
+        plan = plan_installation(["lsdvd"], self._arch(), runner)
+        self.assertEqual(plan.manual_notes, [])
+        self.assertIsNone(plan.aur_helper)
+        self.assertEqual(plan.repositories, {"lsdvd": "cachyos-extra-znver4"})
 
     def test_ffmpeg_build_options_are_reported_not_installed(self):
         plan = plan_installation(["dvdvideo", "bluray"], self._arch(), lambda cmd, timeout=60: (0, ""))

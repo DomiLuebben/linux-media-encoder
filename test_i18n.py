@@ -114,8 +114,10 @@ class LocalizedWidgetTest(unittest.TestCase):
             is_immutable=True,
             packages=["lsdvd", "libaacs"],
             command=["pkexec", "pacman", "-S", "--needed", "--noconfirm", "lsdvd", "libaacs"],
-            manual_notes=list(dependency_installer._MANUAL_NOTES.values())
+            manual_notes=[dependency_installer.AUR_ONLY_NOTE]
             + list(dependency_installer._FFMPEG_BUILD_OPTIONS.values()),
+            aur_helper="paru",
+            repositories={"lsdvd": "cachyos-extra-znver4"},
             info_notes=[
                 "libdvdcss wird bei Debian und Ubuntu über libdvd-pkg aus dem Quelltext "
                 "gebaut. Das geschieht im selben Arbeitsgang, braucht eine "

@@ -52,6 +52,12 @@ with Python 3 and PyQt6.
 > once. It needs an internet connection and takes a few minutes; progress is shown in the log.
 > On Fedora, LME checks whether RPM Fusion (free) is set up; if it is not, a notice asks you to
 > set it up — all other components are still installed.
+> On Arch, `pacman -Si` — and therefore the actual state of the machine — decides whether a
+> package comes from a configured repository or only from the AUR: CachyOS, EndeavourOS and
+> Garuda carry many packages in their own repositories, and that is detected as such. The
+> confirmation dialog names the source repository for every package. Anything not found anywhere
+> is reported as an AUR case — LME builds no AUR packages but names the matching command if an
+> AUR helper is present.
 
 > **Copy-protected Blu-rays:** LME ships no decryption keys and downloads none. Unencrypted discs
 > and BDMV folders work out of the box. For AACS-protected discs, `libaacs` looks for a `KEYDB.cfg`
