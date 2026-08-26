@@ -69,7 +69,7 @@ Der direkte Weg meldet Erfolg — niemand merkt, dass ein anderes Format herausk
 | git status | sauber (HEAD `7b97ddb` = origin/main) |
 | Gegenproben Befund 1/2/3 | je rot gegen den Ist-Stand bestätigt |
 
-## Behebung & Freigabe (1.11.1)
+## Behebung & Freigabe (1.11.2)
 
 Alle drei ursprünglichen Befunde sowie die Punkte der Nachprüfung wurden behoben und durch 15 neue Regressionstests abgesichert:
 1. **Befund 1 behoben:** `build_dvd_rip_args()` & `build_bluray_rip_args()` mappen `-1` auf `0:a?`/`0:s?` und behalten Stream-Indizes für `>= 0` bei.
@@ -82,5 +82,5 @@ Alle drei ursprünglichen Befunde sowie die Punkte der Nachprüfung wurden behob
 | --- | --- |
 | unittest discover (10 Suiten) | **243/243 OK** |
 | PKGBUILD SHA-256 (21 Dateien) | **alle 21 OK** |
-| version.py ↔ PKGBUILD | 1.11.1 / 1.11.1-1 konsistent |
-| Paketbau (makepkg -f) | `linux-media-encoder-1.11.1-1-any.pkg.tar.zst` (SHA-256 `70c1738a2e5b1a55af375549483c3d87d9277d313305aecb2ba5375565a91855`) erfolgreich gebaut |
+| version.py ↔ PKGBUILD | 1.11.2 / 1.11.2-1 konsistent |
+| Paketbau (makepkg -f) | `linux-media-encoder-1.11.2-1-any.pkg.tar.zst` (SHA-256 `f365f7e930f7d11e37363e548a211dc1d0e3f3c4e641fcf71989583068f667e1`) erfolgreich gebaut |
