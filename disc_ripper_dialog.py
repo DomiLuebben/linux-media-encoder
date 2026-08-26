@@ -725,13 +725,17 @@ class DiscRipperDialog(QDialog):
         disc_label = res.disc_label or "Disc"
 
         if res.disc_type == DiscType.AUDIO_CD:
-            codec_choice = self.combo_cd_codec.currentText().lower()
-            codec_key = "flac" if "flac" in codec_choice else ("mp3" if "mp3" in codec_choice else "wav")
+            # Gemeinsame Codec-Ermittlung für beide Wege: früher kannte dieser
+            # Zweig nur flac/mp3/wav — AAC, Opus und ALAC fielen still auf WAV
+            # zurück, obwohl die Auswahl sie anbietet.
+            codec_key = optical_media.audio_codec_key_from_label(self.combo_cd_codec.currentText())
+            out_ext = optical_media.audio_file_extension(codec_key)
+            default_bitrates = {"mp3": "320k", "aac": "256k", "opus": "160k"}
             for row in selected_rows:
                 track = res.audio_tracks[row]
                 custom_name = self.table_titles.item(row, 2).text().strip() if self.table_titles.item(row, 2) else track.title
                 safe_name = "".join(c for c in custom_name if c.isalnum() or c in " -_.").strip()
-                out_name = f"{track.track_num:02d} - {safe_name}.{codec_key}"
+                out_name = f"{track.track_num:02d} - {safe_name}.{out_ext}"
                 out_path = os.path.join(out_dir, out_name)
 
                 job = {
@@ -739,8 +743,10 @@ class DiscRipperDialog(QDialog):
                     "output_dir": out_dir,
                     "output_file": out_path,
                     "settings": {
-                        "container": codec_key,
+                        "container": out_ext,
+                        "video_codec": "none",
                         "audio_codec": codec_key,
+                        "audio_bitrate": default_bitrates.get(codec_key, ""),
                         "disc_type": "audio_cd",
                         "track_num": track.track_num,
                         "track_title": custom_name,
@@ -836,14 +842,9 @@ class DiscRipperDialog(QDialog):
 
         if res.disc_type == DiscType.AUDIO_CD:
             selected_tracks = [res.audio_tracks[r] for r in selected_rows]
-            codec_choice = self.combo_cd_codec.currentText().lower()
-            codec_key = "flac" if "flac" in codec_choice else (
-                "mp3" if "mp3" in codec_choice else (
-                    "opus" if "opus" in codec_choice else (
-                        "aac" if "aac" in codec_choice else "wav"
-                    )
-                )
-            )
+            # Derselbe Helfer wie im Queue-Zweig — früher fehlte hier ALAC und
+            # fiel still auf WAV zurück.
+            codec_key = optical_media.audio_codec_key_from_label(self.combo_cd_codec.currentText())
             self.active_worker = AudioCdRipWorker(
                 device_path=self.current_source or "/dev/sr0",
                 tracks=selected_tracks,

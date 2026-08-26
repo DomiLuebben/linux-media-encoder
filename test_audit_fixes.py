@@ -383,5 +383,223 @@ class SubtitleOverwriteTest(unittest.TestCase):
             finally:
                 dialog.close()
 
+
+class RipAudit20260826Test(unittest.TestCase):
+    """Regressionstests zu den drei Befunden des Gesamtaudits vom 26.08.2026."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    # --- Befund 1: 'Alle Spuren' (Index -1) ---
+
+    def test_dvd_rip_args_all_streams_maps_optional_not_negative_index(self):
+        from optical_media import build_dvd_rip_args
+
+        args, out = build_dvd_rip_args(
+            source_path="/dev/sr0", title_num=1,
+            audio_stream_idx=-1, subtitle_stream_idx=-1,
+            output_file="/tmp/film.mkv", remux_mkv=True,
+        )
+        self.assertIn("0:a?", args)   # alle Tonspuren, optional
+        self.assertIn("0:s?", args)   # alle Untertitel, optional
+        self.assertNotIn("0:a:-1", args)
+        self.assertNotIn("0:s:-1", args)
+        self.assertTrue(out.endswith(".mkv"))
+
+    def test_bluray_rip_args_all_streams_maps_optional_not_negative_index(self):
+        from optical_media import build_bluray_rip_args
+
+        args, out = build_bluray_rip_args(
+            source_path="/dev/sr0", playlist_num=5,
+            audio_stream_idx=-1, subtitle_stream_idx=-1,
+            output_file="/tmp/film.mkv", remux_mkv=True,
+        )
+        self.assertIn("0:a?", args)
+        self.assertIn("0:s?", args)
+        self.assertNotIn("0:a:-1", args)
+        self.assertNotIn("0:s:-1", args)
+
+    def test_rip_args_still_map_explicit_stream_index(self):
+        from optical_media import build_bluray_rip_args
+
+        args, _ = build_bluray_rip_args(
+            source_path="/media/bd", playlist_num=1,
+            audio_stream_idx=2, subtitle_stream_idx=0,
+            output_file="/tmp/film.mkv",
+        )
+        self.assertIn("0:a:2", args)
+        self.assertIn("0:s:0", args)
+
+    # --- Befund 2: Audio-CD-Formatauswahl vollständig ---
+
+    def test_codec_key_helper_covers_every_combobox_entry(self):
+        from optical_media import audio_codec_key_from_label
+
+        cases = {
+            "FLAC (Verlustfrei)": "flac",
+            "WAV (Unkomprimiert)": "wav",
+            "MP3 (320 kbps)": "mp3",
+            "AAC (256 kbps)": "aac",     # früher: still WAV im Queue-Zweig
+            "Opus (160 kbps)": "opus",   # früher: WAV im Queue-Zweig
+            "ALAC": "alac",              # früher: überall WAV
+            "": "wav",
+        }
+        for label, expected in cases.items():
+            self.assertEqual(audio_codec_key_from_label(label), expected, label)
+
+    def test_audio_extension_aac_and_alac_belong_to_m4a(self):
+        from optical_media import audio_file_extension
+
+        self.assertEqual(audio_file_extension("aac"), "m4a")
+        self.assertEqual(audio_file_extension("alac"), "m4a")
+        self.assertEqual(audio_file_extension("flac"), "flac")
+        self.assertEqual(audio_file_extension("mp3"), "mp3")
+        self.assertEqual(audio_file_extension("opus"), "opus")
+        self.assertEqual(audio_file_extension("wav"), "wav")
+
+    def test_queue_job_for_aac_cd_uses_aac_and_m4a(self):
+        """AAC-Auswahl darf nicht mehr als WAV-Job in die Queue landen."""
+        import optical_media
+        from disc_ripper_dialog import DiscRipperDialog
+        sys.path.insert(0, os.path.dirname(__file__))
+        from test_optical_media import LSDVD_OY_FIXTURE, parse_lsdvd_output  # noqa: F401
+
+        mock_cd = optical_media.DiscInspectionResult(
+            source_path="/dev/sr0",
+            disc_type=optical_media.DiscType.AUDIO_CD,
+            disc_label="Testalbum",
+            total_duration_sec=300.0,
+            audio_tracks=[
+                optical_media.AudioTrackInfo(track_num=1, duration_sec=150.0, title="Eins"),
+                optical_media.AudioTrackInfo(track_num=2, duration_sec=150.0, title="Zwei"),
+            ],
+        )
+
+        with patch("optical_media.scan_optical_drives", return_value=[]), \
+             patch("optical_media.inspect_source", return_value=mock_cd), \
+             patch("disc_ripper_dialog.QMessageBox.information"):
+            dialog = DiscRipperDialog(initial_source="/dev/sr0")
+            try:
+                dialog.edit_output_dir.setText("/tmp/cd_out")
+                index = dialog.combo_cd_codec.findText("AAC (256 kbps)")
+                self.assertGreaterEqual(index, 0)
+                dialog.combo_cd_codec.setCurrentIndex(index)
+
+                received = []
+                dialog.jobs_queued.connect(lambda jobs: received.extend(jobs))
+                dialog._on_action_clicked()
+
+                self.assertEqual(len(received), 2)
+                job = received[0]
+                self.assertTrue(job["output_file"].endswith(".m4a"))
+                settings = job["settings"]
+                self.assertEqual(settings["audio_codec"], "aac")
+                self.assertEqual(settings["container"], "m4a")
+                self.assertEqual(settings["audio_bitrate"], "256k")
+                self.assertEqual(settings["video_codec"], "none")
+            finally:
+                dialog.close()
+
+    def test_direct_worker_receives_alac_codec_key(self):
+        """Der Direkt-Rip-Zweig muss ALAC durchreichen statt es auf WAV zu kappen."""
+        import optical_media
+        from disc_ripper_dialog import DiscRipperDialog
+        from disc_rip_worker import AudioCdRipWorker
+
+        captured = {}
+
+        class FakeWorker(AudioCdRipWorker):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured["codec"] = self.codec
+                raise SystemExit  # nicht wirklich starten
+
+        mock_cd = optical_media.DiscInspectionResult(
+            source_path="/dev/sr0",
+            disc_type=optical_media.DiscType.AUDIO_CD,
+            disc_label="Testalbum",
+            total_duration_sec=150.0,
+            audio_tracks=[optical_media.AudioTrackInfo(track_num=1, duration_sec=150.0, title="Eins")],
+        )
+
+        with patch("optical_media.scan_optical_drives", return_value=[]), \
+             patch("optical_media.inspect_source", return_value=mock_cd), \
+             patch.object(DiscRipperDialog, "_start_iso_dump"):
+            dialog = DiscRipperDialog(initial_source="/dev/sr0")
+            try:
+                index = dialog.combo_cd_codec.findText("ALAC")
+                self.assertGreaterEqual(index, 0)
+                dialog.combo_cd_codec.setCurrentIndex(index)
+                dialog.radio_mode_direct.setChecked(True)
+                dialog.edit_output_dir.setText("/tmp/cd_out")
+
+                with patch("disc_ripper_dialog.AudioCdRipWorker", FakeWorker):
+                    with self.assertRaises(SystemExit):
+                        dialog._start_direct_rip([0], "/tmp/cd_out")
+
+                self.assertEqual(captured["codec"], "alac")
+            finally:
+                dialog.close()
+
+    def test_encode_args_support_alac_and_aac(self):
+        from optical_media import build_audio_encode_args, AudioTrackInfo
+
+        track = AudioTrackInfo(track_num=7, duration_sec=100.0, title="T", artist="A", album="B")
+        args_alac = build_audio_encode_args("in.wav", "out.m4a", codec="alac", track_info=track)
+        self.assertEqual(args_alac[args_alac.index("-c:a") + 1], "alac")
+
+        args_aac = build_audio_encode_args("in.wav", "out.m4a", codec="aac", bitrate="256k", track_info=track)
+        self.assertEqual(args_aac[args_aac.index("-c:a") + 1], "aac")
+        self.assertEqual(args_aac[args_aac.index("-b:a") + 1], "256k")
+
+    # --- Befund 3: ignore_errors in Stufe 1 des zweistufigen Rips ---
+
+    def test_two_stage_disc_stage_passes_ignore_errors_false_to_builder(self):
+        """Bei abgewählter Fehlertoleranz darf Stufe 1 keine tolerant-Flags bauen."""
+        import mainwindow
+        from mainwindow import MainWindow
+        import optical_media
+
+        job = {
+            "input_file": "/dev/sr0",
+            "output_dir": "/tmp/out",
+            "output_file": "/tmp/out/film.mp4",
+            "settings": {
+                "disc_type": "bluray",
+                "two_stage": True,
+                "ignore_errors": False,
+                "title_num": 1,
+                "source_duration": 600.0,
+            },
+            "status": "Bereit",
+            "progress": 0.0,
+        }
+        captured = {}
+
+        def fake_builder(source_path, playlist_num, **kwargs):
+            captured.update(kwargs)
+            return ["-y"], "/tmp/staged.mkv"
+
+        win = MainWindow.__new__(MainWindow)  # ohne komplette UI-Initialisierung
+        win.jobs = [job]
+        win.current_job_idx = 0
+        win.console = type("C", (), {"append": lambda self, text: None})()
+        win.settings_store = type("S", (), {"value": staticmethod(lambda *_a, **_k: "")})()
+        win.active_worker = None
+        win.is_running = True
+        win.tr = lambda text, **kw: text
+        win._update_table_row = lambda idx: None
+        win._phase_status = lambda job, text: text
+
+        builder_name = "build_bluray_rip_args"
+        with patch.object(optical_media, builder_name, side_effect=fake_builder), \
+             patch("mainwindow.FFmpegWorker") as fake_worker:
+            fake_worker.return_value.start = lambda: None
+            win._run_disc_rip_stage(job)
+
+        self.assertFalse(captured.get("ignore_errors", True),
+                         "Stufe 1 muss die abgewählte Fehlertoleranz übernehmen")
+
 if __name__ == "__main__":
     unittest.main()

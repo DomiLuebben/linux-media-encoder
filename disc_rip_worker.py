@@ -101,14 +101,10 @@ class AudioCdRipWorker(QObject):
         uid = uuid.uuid4().hex[:8]
         self._tmp_wav_file = os.path.join(self.output_dir, f".lme_tmp_cdda_{track.track_num}_{uid}.wav")
 
-        # Ziel-Dateiname vorbereiten
-        ext = "flac" if self.codec == "flac" else (
-            "mp3" if self.codec == "mp3" else (
-                "m4a" if self.codec in ("aac", "alac") else (
-                    "opus" if self.codec == "opus" else "wav"
-                )
-            )
-        )
+        # Ziel-Dateiname vorbereiten. AAC und ALAC gehören nach M4A — früher
+        # landete beides in einer .aac-Datei, ALAC sogar in .wav (der alte
+        # Ausdruck kannte alac nicht).
+        ext = optical_media.audio_file_extension(self.codec)
         safe_title = re.sub(r'[^\w\-_\. ]', '_', track.title or f"Track_{track.track_num:02d}").strip()
         final_filename = f"{track.track_num:02d} - {safe_title}.{ext}"
         self._final_out_file = os.path.join(self.output_dir, final_filename)

@@ -988,6 +988,9 @@ def _resolve_audio_codec(settings):
         "mp3": "libmp3lame",
         "opus": "libopus",
         "flac": "flac",
+        # ALAC gehört dazu, sonst läuft ein Audio-CD-Job mit alac als Codec
+        # durch die Auflösung unangetastet und FFmpeg kennt den Namen nicht.
+        "alac": "alac",
         "copy": "copy",
         "none": "none",
     }.get(a_codec.lower(), a_codec)

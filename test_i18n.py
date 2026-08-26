@@ -50,6 +50,10 @@ class LocalizedWidgetTest(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 
+    @classmethod
+    def tearDownClass(cls):
+        set_locale("de_DE")
+
     def test_english_display_keeps_stable_source_values(self):
         set_locale("en_US")
         self.assertEqual(active_locale(), "en_US")

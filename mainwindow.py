@@ -2732,6 +2732,9 @@ class MainWindow(QMainWindow):
             self.sub_process.kill()
         if hasattr(self, "sub_ai_process") and self.sub_ai_process and self.sub_ai_process.state() == QProcess.ProcessState.Running:
             self.sub_ai_process.kill()
+        # Audio-CD-Auslesen (cdparanoia) ebenfalls abbrechen
+        if hasattr(self, "cd_extract_process") and self.cd_extract_process and self.cd_extract_process.state() == QProcess.ProcessState.Running:
+            self.cd_extract_process.kill()
             
         if self.active_worker:
             self.active_worker.stop()
@@ -2787,6 +2790,13 @@ class MainWindow(QMainWindow):
             
         job = self.jobs[self.current_job_idx]
 
+        # Audio-CD-Jobs brauchen zuerst cdparanoia — FFmpeg kann CDDA nicht
+        # selbst lesen, der frühere Weg startete FFmpeg direkt gegen /dev/sr0
+        # und scheiterte an der Eingabedatei.
+        if self._job_needs_audio_cd_extract(job):
+            self._run_audio_cd_extract_stage(job)
+            return
+
         # Disc-Jobs werden zweistufig verarbeitet: erst verlustfrei von der
         # Disc in eine Zwischendatei, dann daraus konvertieren. So laeuft das
         # Laufwerk nur waehrend des kurzen Auslesens statt ueber die gesamte
@@ -2806,6 +2816,8 @@ class MainWindow(QMainWindow):
         settings = job.get("settings") or {}
         if not settings.get("input_args") and not settings.get("disc_type"):
             return False
+        if settings.get("disc_type") == "audio_cd":
+            return False  # hat seinen eigenen Weg unten
         # Vorgabe ist der direkte Weg. Gemessen an einer Blu-ray liegen beide
         # Wege beim Auslesen gleichauf (5,6x gegen 5,5x) — die Grenze setzt das
         # Laufwerk, nicht die CPU. Zweistufig lohnt erst, wenn die Umwandlung
@@ -2814,6 +2826,68 @@ class MainWindow(QMainWindow):
             return False
         staged = settings.get("_staged_source")
         return not (staged and os.path.exists(staged))
+
+    def _job_needs_audio_cd_extract(self, job):
+        """True, solange der Audio-Track noch nicht per cdparanoia ausgelesen ist."""
+        settings = job.get("settings") or {}
+        if settings.get("disc_type") != "audio_cd":
+            return False
+        wav_path = settings.get("_extracted_wav")
+        return not (wav_path and os.path.exists(wav_path))
+
+    def _run_audio_cd_extract_stage(self, job):
+        """Stufe 1 eines Audio-CD-Jobs: Track verlustfrei nach WAV auslesen."""
+        import optical_media
+        import tempfile
+
+        settings = job["settings"]
+        track_num = int(settings.get("track_num") or 1)
+
+        fd, wav_path = tempfile.mkstemp(prefix="lme_cdda_", suffix=".wav")
+        os.close(fd)
+        settings["_extracted_wav"] = wav_path
+
+        cmd = optical_media.build_audio_cd_rip_command(job["input_file"], track_num, wav_path)
+        job["_phase"] = "rip"
+        job["status"] = self._phase_status(job, "Liest Disc...")
+        job["progress"] = 0.0
+        job["time_remaining"] = "Berechnet..."
+        self._update_table_row(self.current_job_idx)
+
+        self.console.append(f"\n[LME AUDIO-CD] Extrahiere Track {track_num} nach {os.path.dirname(wav_path)}")
+        self.console.append("[LME AUDIO-CD] Befehl: " + " ".join(cmd))
+
+        self.cd_extract_process = QProcess(self)
+        self.cd_extract_process.finished.connect(self._on_audio_cd_extract_finished)
+        self.cd_extract_process.start(cmd[0], cmd[1:])
+
+    def _on_audio_cd_extract_finished(self, exit_code, exit_status):
+        """cdparanoia fertig — danach konvertiert der normale Worker aus dem WAV."""
+        if self.current_job_idx == -1 or self.current_job_idx >= len(self.jobs):
+            return
+        job = self.jobs[self.current_job_idx]
+        wav_path = job["settings"].get("_extracted_wav", "")
+
+        ok = (
+            exit_code == 0
+            and exit_status == QProcess.ExitStatus.NormalExit
+            and wav_path
+            and os.path.exists(wav_path)
+            and os.path.getsize(wav_path) > 44  # mehr als ein leerer WAV-Kopf
+        )
+        if not ok:
+            self._cleanup_staged_source(job)
+            self._fail_current_job(tr(
+                "Auslesen des Audio-Tracks fehlgeschlagen (cdparanoia Rückgabewert {code}).",
+                code=exit_code,
+            ))
+            return
+
+        self.console.append("[LME AUDIO-CD] Auslesen fertig. Konvertierung.")
+        job["progress"] = 0.0
+        self._update_table_row(self.current_job_idx)
+        # Entkoppelt weiterreichen, damit der beendete Prozess sauber abgebaut wird.
+        QTimer.singleShot(0, lambda: self._start_current_ffmpeg_job(job))
 
     def _run_disc_rip_stage(self, job):
         """Stufe 1: Titel verlustfrei von der Disc in eine Zwischendatei lesen."""
@@ -2870,12 +2944,14 @@ class MainWindow(QMainWindow):
                 source_path=job["input_file"], title_num=title_num,
                 audio_stream_idx=audio_idx, subtitle_stream_idx=sub_idx,
                 output_file=staged_path, remux_mkv=True,
+                ignore_errors=bool(settings.get("ignore_errors", True)),
             )
         else:
             args, staged_path = optical_media.build_bluray_rip_args(
                 source_path=job["input_file"], playlist_num=title_num,
                 audio_stream_idx=audio_idx, subtitle_stream_idx=sub_idx,
                 output_file=staged_path, remux_mkv=True,
+                ignore_errors=bool(settings.get("ignore_errors", True)),
             )
         settings["_staged_source"] = staged_path
 
@@ -2919,15 +2995,16 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: self._start_current_ffmpeg_job(job))
 
     def _cleanup_staged_source(self, job):
-        """Entfernt die Zwischendatei eines Disc-Jobs."""
+        """Entfernt die Zwischendateien eines Disc-Jobs (Remux oder CDDA-WAV)."""
         settings = job.get("settings") or {}
-        staged = settings.pop("_staged_source", "")
-        if staged and os.path.exists(staged):
-            try:
-                os.remove(staged)
-                self.console.append(f"[LME DISC] Zwischendatei entfernt: {staged}")
-            except OSError as exc:
-                self.console.append(f"[LME DISC] Zwischendatei blieb liegen ({exc}): {staged}")
+        for key in ("_staged_source", "_extracted_wav"):
+            staged = settings.pop(key, "")
+            if staged and os.path.exists(staged):
+                try:
+                    os.remove(staged)
+                    self.console.append(f"[LME DISC] Zwischendatei entfernt: {staged}")
+                except OSError as exc:
+                    self.console.append(f"[LME DISC] Zwischendatei blieb liegen ({exc}): {staged}")
 
     def _fail_current_job(self, message):
         """Markiert den laufenden Job als fehlgeschlagen und macht weiter."""
@@ -3009,6 +3086,8 @@ class MainWindow(QMainWindow):
         # Laufwerk ansprechen.
         settings = job["settings"]
         staged = settings.get("_staged_source", "")
+        extracted_wav = settings.get("_extracted_wav", "")
+        audio_encode_args = None
         if staged and os.path.exists(staged):
             job["_phase"] = "encode"
             effective_input = staged
@@ -3016,6 +3095,27 @@ class MainWindow(QMainWindow):
                 k: v for k, v in settings.items()
                 if k not in ("input_args", "disc_type")
             }
+        elif extracted_wav and os.path.exists(extracted_wav):
+            # Audio-CD-Job: aus dem cdparanoia-WAV konvertieren. Die Argumente
+            # kommen aus build_audio_encode_args, weil presets keine Metadaten
+            # (Titel/Interpret/Album/Tracknummer) setzen kann.
+            import optical_media
+            job["_phase"] = "encode"
+            effective_input = extracted_wav
+            effective_settings = None
+            audio_encode_args = optical_media.build_audio_encode_args(
+                tmp_wav_input=extracted_wav,
+                output_file=job["output_file"],
+                codec=str(settings.get("audio_codec") or "flac"),
+                bitrate=str(settings.get("audio_bitrate") or ""),
+                track_info=optical_media.AudioTrackInfo(
+                    track_num=int(settings.get("track_num") or 0),
+                    duration_sec=float(settings.get("source_duration") or 0.0),
+                    title=str(settings.get("track_title") or ""),
+                    artist=str(settings.get("track_artist") or ""),
+                    album=str(settings.get("track_album") or ""),
+                ),
+            )
         else:
             effective_input = job["input_file"]
             effective_settings = settings
@@ -3030,7 +3130,7 @@ class MainWindow(QMainWindow):
 
         self._on_job_selection_changed()
 
-        ffmpeg_args = presets.get_ffmpeg_args(effective_input, job["output_file"], effective_settings)
+        ffmpeg_args = audio_encode_args or presets.get_ffmpeg_args(effective_input, job["output_file"], effective_settings)
 
         self.console.append(f"\n[LME LOGS] Starte Konvertierung von: {os.path.basename(job['input_file'])}")
         self.console.append(f"[LME LOGS] Befehl: ffmpeg " + " ".join(ffmpeg_args) + "\n")

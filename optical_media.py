@@ -1006,12 +1006,17 @@ def build_dvd_rip_args(
     args = ["-y"] + input_args + ["-i", source_path]
 
     args += ["-map", "0:v:0"]
-    if audio_stream_idx is not None:
-        args += ["-map", f"0:a:{audio_stream_idx}"]
-    else:
+    # -1 bedeutet "alle Spuren dieser Art" (Auswahl 'Alle' im Ripper-Dialog)
+    # und muss wie in presets.get_ffmpeg_args zu 0:a? / 0:s? werden — ein rohes
+    # 0:a:-1 wählt laut FFmpeg die LETZTE Spur, nicht alle.
+    if audio_stream_idx is None or audio_stream_idx == -1:
         args += ["-map", "0:a?"]
+    else:
+        args += ["-map", f"0:a:{audio_stream_idx}"]
 
-    if subtitle_stream_idx is not None:
+    if subtitle_stream_idx == -1:
+        args += ["-map", "0:s?"]
+    elif subtitle_stream_idx is not None:
         args += ["-map", f"0:s:{subtitle_stream_idx}"]
 
     out_dir = os.path.dirname(output_file) or "."
@@ -1079,12 +1084,17 @@ def build_bluray_rip_args(
     args = ["-y"] + input_args + ["-i", probe_url]
 
     args += ["-map", "0:v:0"]
-    if audio_stream_idx is not None:
-        args += ["-map", f"0:a:{audio_stream_idx}"]
-    else:
+    # -1 bedeutet "alle Spuren dieser Art" (Auswahl 'Alle' im Ripper-Dialog)
+    # und muss wie in presets.get_ffmpeg_args zu 0:a? / 0:s? werden — ein rohes
+    # 0:a:-1 wählt laut FFmpeg die LETZTE Spur, nicht alle.
+    if audio_stream_idx is None or audio_stream_idx == -1:
         args += ["-map", "0:a?"]
+    else:
+        args += ["-map", f"0:a:{audio_stream_idx}"]
 
-    if subtitle_stream_idx is not None:
+    if subtitle_stream_idx == -1:
+        args += ["-map", "0:s?"]
+    elif subtitle_stream_idx is not None:
         args += ["-map", f"0:s:{subtitle_stream_idx}"]
 
     out_dir = os.path.dirname(output_file) or "."
@@ -1126,6 +1136,32 @@ def build_audio_cd_rip_command(
     Erzeugt den cdparanoia-Befehl für einen einzelnen Audio-Track.
     """
     return ["cdparanoia", "-d", device_path, f"{track_num}-{track_num}", tmp_wav_output]
+
+
+def audio_codec_key_from_label(label: str) -> str:
+    """Ordnet den Anzeigetext der Audio-CD-Formatauswahl einem Codec-Schlüssel zu.
+
+    Einzige Quelle für beide Wege (Queue und Direkt-Rip): früher kannte der
+    Queue-Zweig nur flac/mp3/wav und der Direkt-Zweig alac nicht — AAC, Opus
+    und ALAC fielen stillschweigend auf WAV zurück.
+    """
+    choice = str(label or "").strip().lower()
+    if "flac" in choice:
+        return "flac"
+    if "mp3" in choice:
+        return "mp3"
+    if "aac" in choice:
+        return "aac"
+    if "opus" in choice:
+        return "opus"
+    if "alac" in choice:
+        return "alac"
+    return "wav"
+
+
+def audio_file_extension(codec_key: str) -> str:
+    """Dateiendung zum Codec-Schlüssel (AAC und ALAC gehören in M4A)."""
+    return {"aac": "m4a", "alac": "m4a", "opus": "opus"}.get(str(codec_key or "").lower(), str(codec_key or "wav").lower())
 
 
 def build_audio_encode_args(
