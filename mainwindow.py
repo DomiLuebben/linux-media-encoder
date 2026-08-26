@@ -2859,7 +2859,24 @@ class MainWindow(QMainWindow):
 
         self.cd_extract_process = QProcess(self)
         self.cd_extract_process.finished.connect(self._on_audio_cd_extract_finished)
+        self.cd_extract_process.errorOccurred.connect(self._on_audio_cd_extract_error)
         self.cd_extract_process.start(cmd[0], cmd[1:])
+
+    def _on_audio_cd_extract_error(self, error):
+        """Fängt Fehler beim Starten von cdparanoia ab (z.B. nicht installiert) — 'finished' feuert dann nie."""
+        if error != QProcess.ProcessError.FailedToStart:
+            return
+        if self.current_job_idx == -1 or self.current_job_idx >= len(self.jobs):
+            return
+        job = self.jobs[self.current_job_idx]
+        self._cleanup_staged_source(job)
+        if not self.is_running:
+            job["status"] = "Abgebrochen"
+            self._update_table_row(self.current_job_idx)
+            return
+        self._fail_current_job(tr(
+            "cdparanoia konnte nicht gestartet werden. Bitte prüfen Sie, ob das Paket 'cdparanoia' installiert ist."
+        ))
 
     def _on_audio_cd_extract_finished(self, exit_code, exit_status):
         """cdparanoia fertig — danach konvertiert der normale Worker aus dem WAV."""
@@ -2867,6 +2884,12 @@ class MainWindow(QMainWindow):
             return
         job = self.jobs[self.current_job_idx]
         wav_path = job["settings"].get("_extracted_wav", "")
+
+        if not self.is_running:
+            self._cleanup_staged_source(job)
+            job["status"] = "Abgebrochen"
+            self._update_table_row(self.current_job_idx)
+            return
 
         ok = (
             exit_code == 0

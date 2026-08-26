@@ -34,7 +34,7 @@ class AudioCdRipWorker(QObject):
         tracks: List[AudioTrackInfo],
         output_dir: str,
         codec: str = "flac",
-        bitrate: str = "320k",
+        bitrate: Optional[str] = None,
         parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
@@ -42,6 +42,8 @@ class AudioCdRipWorker(QObject):
         self.tracks = tracks
         self.output_dir = output_dir
         self.codec = codec
+        if bitrate is None:
+            bitrate = optical_media.audio_bitrate_from_label(codec)
         self.bitrate = bitrate
 
         self.current_track_idx = 0
@@ -117,6 +119,7 @@ class AudioCdRipWorker(QObject):
         self.process = QProcess(self)
         self.process.readyReadStandardError.connect(self._handle_process_stderr)
         self.process.finished.connect(self._handle_step_finished)
+        self.process.errorOccurred.connect(self._handle_process_error)
         self.log_received.emit(f"[cdparanoia] Starte Extraktion von Track {track.track_num}...")
         self.process.start(cmd[0], cmd[1:])
 
@@ -139,8 +142,17 @@ class AudioCdRipWorker(QObject):
         self.process = QProcess(self)
         self.process.readyReadStandardError.connect(self._handle_process_stderr)
         self.process.finished.connect(self._handle_step_finished)
+        self.process.errorOccurred.connect(self._handle_process_error)
         self.log_received.emit(f"[ffmpeg] Encodiere Track {track.track_num}...")
         self.process.start(args[0], args[1:])
+
+    def _handle_process_error(self, error: QProcess.ProcessError):
+        if self._is_cancelled:
+            return
+        if error == QProcess.ProcessError.FailedToStart:
+            step_name = "cdparanoia" if self._current_step == "extract" else "ffmpeg"
+            self._cleanup_temp_files()
+            self.finished.emit(False, f"Programm '{step_name}' konnte nicht gestartet werden. Ist es installiert?")
 
     def _handle_process_stderr(self):
         if not self.process:
@@ -238,7 +250,19 @@ class IsoDumpWorker(QObject):
         self.process = QProcess(self)
         self.process.readyReadStandardError.connect(self._handle_stderr)
         self.process.finished.connect(self._handle_finished)
+        self.process.errorOccurred.connect(self._handle_process_error)
         self.process.start(cmd[0], cmd[1:])
+
+    def _handle_process_error(self, error: QProcess.ProcessError):
+        if self._is_cancelled:
+            return
+        if error == QProcess.ProcessError.FailedToStart:
+            if os.path.exists(self._tmp_iso_path):
+                try:
+                    os.remove(self._tmp_iso_path)
+                except OSError:
+                    pass
+            self.finished.emit(False, "Programm 'dd' konnte nicht gestartet werden. Ist es installiert?")
 
     def stop(self):
         """Bricht den ISO-Dump ab."""

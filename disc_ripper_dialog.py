@@ -730,7 +730,7 @@ class DiscRipperDialog(QDialog):
             # zurück, obwohl die Auswahl sie anbietet.
             codec_key = optical_media.audio_codec_key_from_label(self.combo_cd_codec.currentText())
             out_ext = optical_media.audio_file_extension(codec_key)
-            default_bitrates = {"mp3": "320k", "aac": "256k", "opus": "160k"}
+            bitrate = optical_media.audio_bitrate_from_label(self.combo_cd_codec.currentText())
             for row in selected_rows:
                 track = res.audio_tracks[row]
                 custom_name = self.table_titles.item(row, 2).text().strip() if self.table_titles.item(row, 2) else track.title
@@ -746,7 +746,7 @@ class DiscRipperDialog(QDialog):
                         "container": out_ext,
                         "video_codec": "none",
                         "audio_codec": codec_key,
-                        "audio_bitrate": default_bitrates.get(codec_key, ""),
+                        "audio_bitrate": bitrate,
                         "disc_type": "audio_cd",
                         "track_num": track.track_num,
                         "track_title": custom_name,
@@ -842,14 +842,16 @@ class DiscRipperDialog(QDialog):
 
         if res.disc_type == DiscType.AUDIO_CD:
             selected_tracks = [res.audio_tracks[r] for r in selected_rows]
-            # Derselbe Helfer wie im Queue-Zweig — früher fehlte hier ALAC und
-            # fiel still auf WAV zurück.
+            # Derselbe Helfer wie im Queue-Zweig für Codec und Bitrate: früher
+            # fehlte hier ALAC und Bitraten (AAC 256k, Opus 160k) wurden ignoriert.
             codec_key = optical_media.audio_codec_key_from_label(self.combo_cd_codec.currentText())
+            bitrate = optical_media.audio_bitrate_from_label(self.combo_cd_codec.currentText())
             self.active_worker = AudioCdRipWorker(
                 device_path=self.current_source or "/dev/sr0",
                 tracks=selected_tracks,
                 output_dir=out_dir,
                 codec=codec_key,
+                bitrate=bitrate,
                 parent=self,
             )
             self.active_worker.progress_updated.connect(self._on_worker_progress)

@@ -601,5 +601,221 @@ class RipAudit20260826Test(unittest.TestCase):
         self.assertFalse(captured.get("ignore_errors", True),
                          "Stufe 1 muss die abgewählte Fehlertoleranz übernehmen")
 
+    # --- Zusätzliche Nachprüfungen: Bitraten, cdparanoia-Fehlerbehandlung & Audio-CD Lifecycle ---
+
+    def test_audio_bitrate_helper_matches_all_combobox_entries(self):
+        from optical_media import audio_bitrate_from_label
+
+        cases = {
+            "MP3 (320 kbps)": "320k",
+            "AAC (256 kbps)": "256k",
+            "Opus (160 kbps)": "160k",
+            "FLAC (Verlustfrei)": "",
+            "WAV (Unkomprimiert)": "",
+            "ALAC": "",
+            "mp3": "320k",
+            "aac": "256k",
+            "opus": "160k",
+            "flac": "",
+            "alac": "",
+        }
+        for label, expected in cases.items():
+            self.assertEqual(audio_bitrate_from_label(label), expected, label)
+
+    def test_direct_rip_passes_correct_bitrate_for_aac_and_opus(self):
+        """Direkt-Rip darf AAC nicht mehr auf 320k überschreiben, sondern muss 256k/160k nutzen."""
+        import optical_media
+        from disc_ripper_dialog import DiscRipperDialog
+        from disc_rip_worker import AudioCdRipWorker
+
+        captured = {}
+
+        class FakeWorker(AudioCdRipWorker):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured["codec"] = self.codec
+                captured["bitrate"] = self.bitrate
+                raise SystemExit
+
+        mock_cd = optical_media.DiscInspectionResult(
+            source_path="/dev/sr0",
+            disc_type=optical_media.DiscType.AUDIO_CD,
+            disc_label="Testalbum",
+            total_duration_sec=150.0,
+            audio_tracks=[optical_media.AudioTrackInfo(track_num=1, duration_sec=150.0, title="Eins")],
+        )
+
+        with patch("optical_media.scan_optical_drives", return_value=[]), \
+             patch("optical_media.inspect_source", return_value=mock_cd):
+            dialog = DiscRipperDialog(initial_source="/dev/sr0")
+            try:
+                dialog.radio_mode_direct.setChecked(True)
+                dialog.edit_output_dir.setText("/tmp/cd_out")
+
+                # Test AAC (256 kbps)
+                idx_aac = dialog.combo_cd_codec.findText("AAC (256 kbps)")
+                self.assertGreaterEqual(idx_aac, 0)
+                dialog.combo_cd_codec.setCurrentIndex(idx_aac)
+
+                with patch("disc_ripper_dialog.AudioCdRipWorker", FakeWorker):
+                    with self.assertRaises(SystemExit):
+                        dialog._start_direct_rip([0], "/tmp/cd_out")
+                self.assertEqual(captured["codec"], "aac")
+                self.assertEqual(captured["bitrate"], "256k")
+
+                # Test Opus (160 kbps)
+                idx_opus = dialog.combo_cd_codec.findText("Opus (160 kbps)")
+                self.assertGreaterEqual(idx_opus, 0)
+                dialog.combo_cd_codec.setCurrentIndex(idx_opus)
+
+                with patch("disc_ripper_dialog.AudioCdRipWorker", FakeWorker):
+                    with self.assertRaises(SystemExit):
+                        dialog._start_direct_rip([0], "/tmp/cd_out")
+                self.assertEqual(captured["codec"], "opus")
+                self.assertEqual(captured["bitrate"], "160k")
+            finally:
+                dialog.close()
+
+    def test_audio_cd_extract_failed_to_start_fails_gracefully(self):
+        """Wenn cdparanoia nicht gestartet werden kann, darf die Warteschlange nicht hängenbleiben."""
+        from PyQt6.QtCore import QProcess
+        from mainwindow import MainWindow
+
+        job = {
+            "input_file": "/dev/sr0",
+            "output_dir": "/tmp/out",
+            "output_file": "/tmp/out/01 - Test.flac",
+            "settings": {
+                "disc_type": "audio_cd",
+                "track_num": 1,
+                "audio_codec": "flac",
+                "_extracted_wav": "/tmp/nonexistent_temp.wav",
+            },
+            "status": "Bereit",
+            "progress": 0.0,
+        }
+
+        win = MainWindow.__new__(MainWindow)
+        win.jobs = [job]
+        win.current_job_idx = 0
+        win.is_running = True
+        win.console = type("C", (), {"append": lambda self, text: None})()
+        win._run_done = 0
+        win._update_table_row = lambda idx: None
+        win._process_next_job = lambda: None
+        win.tr = lambda text, **kw: text
+
+        # Fehler beim Starten simulieren
+        win._on_audio_cd_extract_error(QProcess.ProcessError.FailedToStart)
+
+        self.assertEqual(job["status"], "Fehlgeschlagen")
+        self.assertIn("cdparanoia", job.get("error_tail", ""))
+
+    def test_audio_cd_queue_full_pipeline_extract_encode_cleanup(self):
+        """End-to-End-Test: CDDA-Extraktion -> FFmpeg-Encoding -> Aufräumen der Zwischendatei."""
+        import tempfile
+        from mainwindow import MainWindow
+
+        # Erstelle echte Dummy-WAV-Datei (> 44 Bytes)
+        fd, temp_wav = tempfile.mkstemp(prefix="test_cdda_", suffix=".wav")
+        os.write(fd, b"RIFF" + b"\x00" * 100)
+        os.close(fd)
+
+        job = {
+            "input_file": "/dev/sr0",
+            "output_dir": "/tmp/out",
+            "output_file": "/tmp/out/01 - Track.m4a",
+            "settings": {
+                "disc_type": "audio_cd",
+                "track_num": 1,
+                "track_title": "Track Title",
+                "track_artist": "Artist",
+                "track_album": "Album",
+                "audio_codec": "aac",
+                "audio_bitrate": "256k",
+                "_extracted_wav": temp_wav,
+            },
+            "status": "Bereit",
+            "progress": 0.0,
+        }
+
+        win = MainWindow.__new__(MainWindow)
+        win.jobs = [job]
+        win.current_job_idx = 0
+        win.is_running = True
+        win.console = type("C", (), {"append": lambda self, text: None})()
+        win._update_table_row = lambda idx: None
+        win._on_job_selection_changed = lambda: None
+        win.tr = lambda text, **kw: text
+
+        captured_ffmpeg_args = []
+
+        class FakeFFmpegWorker:
+            def __init__(self, input_file, output_file, args, *a, **kw):
+                captured_ffmpeg_args.extend(args)
+                self.progress_updated = type("S", (), {"connect": lambda self, fn: None})()
+                self.status_changed = type("S", (), {"connect": lambda self, fn: None})()
+                self.log_received = type("S", (), {"connect": lambda self, fn: None})()
+                self.finished = type("S", (), {"connect": lambda self, fn: None})()
+
+            def start(self):
+                pass
+
+        with patch("mainwindow.FFmpegWorker", FakeFFmpegWorker):
+            win._start_current_ffmpeg_job(job)
+
+        # Prüfe, dass FFmpegWorker mit den Metadaten und dem temporären WAV aufgerufen wurde
+        self.assertIn("-i", captured_ffmpeg_args)
+        self.assertIn(temp_wav, captured_ffmpeg_args)
+        self.assertIn("aac", captured_ffmpeg_args)
+        self.assertIn("256k", captured_ffmpeg_args)
+        self.assertIn("title=Track Title", captured_ffmpeg_args)
+
+        # Simuliere Abschluss des Workers -> Zwischendatei muss gelöscht werden
+        self.assertTrue(os.path.exists(temp_wav))
+        win._cleanup_staged_source(job)
+        self.assertFalse(os.path.exists(temp_wav), "Temporäre WAV-Datei muss aufgeräumt werden")
+
+    def test_audio_cd_rip_worker_failed_to_start(self):
+        """AudioCdRipWorker muss FailedToStart abfangen und finished(False) emittieren."""
+        from PyQt6.QtCore import QProcess
+        from disc_rip_worker import AudioCdRipWorker
+        import optical_media
+
+        worker = AudioCdRipWorker(
+            device_path="/dev/sr0",
+            tracks=[optical_media.AudioTrackInfo(track_num=1, duration_sec=60.0)],
+            output_dir="/tmp/out",
+            codec="aac",
+        )
+        worker._current_step = "extract"
+
+        emitted = []
+        worker.finished.connect(lambda ok, msg: emitted.append((ok, msg)))
+        worker._handle_process_error(QProcess.ProcessError.FailedToStart)
+
+        self.assertEqual(len(emitted), 1)
+        self.assertFalse(emitted[0][0])
+        self.assertIn("cdparanoia", emitted[0][1])
+
+    def test_iso_dump_worker_failed_to_start(self):
+        """IsoDumpWorker muss FailedToStart abfangen und finished(False) emittieren."""
+        from PyQt6.QtCore import QProcess
+        from disc_rip_worker import IsoDumpWorker
+
+        worker = IsoDumpWorker(
+            device_path="/dev/sr0",
+            output_iso_path="/tmp/out.iso",
+        )
+
+        emitted = []
+        worker.finished.connect(lambda ok, msg: emitted.append((ok, msg)))
+        worker._handle_process_error(QProcess.ProcessError.FailedToStart)
+
+        self.assertEqual(len(emitted), 1)
+        self.assertFalse(emitted[0][0])
+        self.assertIn("dd", emitted[0][1])
+
 if __name__ == "__main__":
     unittest.main()
+

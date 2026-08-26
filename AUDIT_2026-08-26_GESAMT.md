@@ -71,15 +71,16 @@ Der direkte Weg meldet Erfolg — niemand merkt, dass ein anderes Format herausk
 
 ## Behebung & Freigabe (1.11.1)
 
-Alle drei Befunde wurden behoben und durch 9 neue Regressionstests abgesichert:
+Alle drei ursprünglichen Befunde sowie die Punkte der Nachprüfung wurden behoben und durch 15 neue Regressionstests abgesichert:
 1. **Befund 1 behoben:** `build_dvd_rip_args()` & `build_bluray_rip_args()` mappen `-1` auf `0:a?`/`0:s?` und behalten Stream-Indizes für `>= 0` bei.
-2. **Befund 2 behoben:** Gemeinsame Codec-Ermittlung `audio_codec_key_from_label()` und Endungshelfer `audio_file_extension()` in `optical_media.py`. Volle Unterstützung für FLAC, WAV, MP3, AAC, Opus, ALAC in beiden Zweigen.
+2. **Befund 2 behoben:** Gemeinsame Codec-Ermittlung `audio_codec_key_from_label()`, Endungshelfer `audio_file_extension()` und Bitraten-Ermittlung `audio_bitrate_from_label()` in `optical_media.py`. Volle Unterstützung für FLAC, WAV, MP3 (320k), AAC (256k), Opus (160k) und ALAC in beiden Zweigen (Queue & Direkt-Rip).
 3. **Befund 3 behoben:** `_run_disc_rip_stage()` reicht `ignore_errors` explizit an die Rip-Builder weiter.
+4. **Nachprüfung behoben:** `mainwindow.py` fängt via `_on_audio_cd_extract_error` das `errorOccurred`-Signal von `cdparanoia` (z.B. bei fehlendem Paket / `FailedToStart`) ab, räumt Temp-Dateien auf und markiert den Job als fehlgeschlagen, statt hängenzubleiben. `AudioCdRipWorker` und `IsoDumpWorker` verbinden `errorOccurred` ebenfalls. Voller End-to-End-Lifecycle-Test für Audio-CD in der Queue (Extraktion → Encodierung → Staging-Cleanup) hinzugefügt.
 
 ### Prüfstand nach Behebung
 | Prüfung | Ergebnis |
 | --- | --- |
-| unittest discover (10 Suiten) | **237/237 OK** |
+| unittest discover (10 Suiten) | **243/243 OK** |
 | PKGBUILD SHA-256 (21 Dateien) | **alle 21 OK** |
 | version.py ↔ PKGBUILD | 1.11.1 / 1.11.1-1 konsistent |
-| Paketbau (makepkg -f) | `linux-media-encoder-1.11.1-1-any.pkg.tar.zst` erfolgreich gebaut |
+| Paketbau (makepkg -f) | `linux-media-encoder-1.11.1-1-any.pkg.tar.zst` (SHA-256 `70c1738a2e5b1a55af375549483c3d87d9277d313305aecb2ba5375565a91855`) erfolgreich gebaut |

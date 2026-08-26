@@ -1164,6 +1164,22 @@ def audio_file_extension(codec_key: str) -> str:
     return {"aac": "m4a", "alac": "m4a", "opus": "opus"}.get(str(codec_key or "").lower(), str(codec_key or "wav").lower())
 
 
+def audio_bitrate_from_label(label: str) -> str:
+    """Ermittelt die Bitrate aus dem Anzeigetext oder Codec-Namen der Audio-CD-Formatauswahl.
+
+    MP3 (320 kbps) -> 320k, AAC (256 kbps) -> 256k, Opus (160 kbps) -> 160k,
+    FLAC/WAV/ALAC -> "" (verlustfrei).
+    """
+    choice = str(label or "").strip().lower()
+    if "320" in choice or choice == "mp3":
+        return "320k"
+    if "256" in choice or choice == "aac":
+        return "256k"
+    if "160" in choice or choice == "opus":
+        return "160k"
+    return ""
+
+
 def build_audio_encode_args(
     tmp_wav_input: str,
     output_file: str,
