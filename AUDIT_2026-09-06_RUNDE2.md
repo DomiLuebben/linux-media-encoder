@@ -141,26 +141,60 @@ Die Meldung `ExcessNotificationGeneration` im Testlauf stammt vom
 Benachrichtigungsdienst des Desktops, der wiederholte Testblasen drosselt. Sie
 ist kein fehlgeschlagener Test.
 
+## Nachtrag — Blu-ray an echter Hardware geprüft
+
+Nach Abschluss des Berichts wurde das Laufwerk angeschlossen. Geprüft an
+**PIONEER BD-RW BDR-UD03** (`/dev/sr0`) mit der **AACS-verschlüsselten** Disc
+`INFERNO_2016`. Damit sind die BD-Korrekturen beider Runden nicht mehr nur
+durch Attrappen belegt.
+
+| Prüfung | Ergebnis |
+|---|---|
+| AACS | **erkannt und entschlüsselt** (`/etc/xdg/aacs/KEYDB.cfg`, BD+ auf dieser Disc nicht vorhanden) |
+| Analyse der Disc | **5,8 s**; Hauptfilm korrekt mit **121,6 min**, 1920×1080, 4 Ton-, 5 Untertitelspuren |
+| Zweistufiger Rip | gewählte **DTS-Spur 2** und **PGS-Untertitel 1** überstehen Stufe 1 und werden in Stufe 2 korrekt als Spur 0 wiedergefunden |
+| `-playlist -1` | von libbluray als Vorgabetitel akzeptiert, `rc=0` |
+
+**Ein Verdacht wurde widerlegt, nicht bestätigt:** `_probe_bluray_playlist()`
+lässt das Argument bei negativen Werten weg (`optical_media.py:860`),
+`build_bluray_rip_args()` schreibt dagegen `-playlist -1`. Das sah nach einem
+Fehler aus — die Messung an der Disc zeigt, dass libbluray `-1` als
+Vorgabetitel annimmt. Kein Handlungsbedarf.
+
+### ⚠️ Bekannte Einschränkung — bewusst so belassen
+
+Am **physischen Laufwerk** bietet LME nur **einen** Titel an, `bd_info` meldet
+aber **49 HDMV- und 2 BD-J-Titel**. `list_bluray_playlists()` liest
+`BDMV/PLAYLIST/*.mpls` und braucht dafür ein offenes Dateisystem, das ein
+Laufwerk nicht hat: leere Liste, Rückfall auf libblurays Vorgabetitel.
+
+**Folge: Bonusmaterial ist von einer physischen Blu-ray nicht rippbar** — nur
+aus einem Ordner oder einer ISO. Nebeneffekt: die Korrektur „Hauptfilm jenseits
+der ersten 40 Playlists" aus Runde 1 kann am Laufwerk **nie** greifen, weil die
+Liste 0 Einträge hat und nicht mehr als 40.
+
+Aufzählen wäre möglich — `ffprobe -playlist 1 -i bluray:/dev/sr0` liefert den
+Film sauber, ganz ohne Dateisystem —, kostet aber gemessene **2,46 s pro
+Playlist** an diesem Laufwerk: 40 Stück wären 98 s statt der heutigen 6 s.
+**Nicht umgesetzt; Dominik zieht den schnellen Weg vor. Nicht ohne Rückfrage
+nachrüsten.**
+
+Nicht LME zuzurechnen: FFmpeg gibt für diese Disc **weder Sprach-Tags noch
+Kapitel** heraus (`tags={}` bereits auf ffprobe-Ebene). Die Anzeige „Unbekannt"
+gibt das korrekt wieder, statt etwas zu erfinden.
+
 ## Grenzen
 
-**Kein optisches Laufwerk verfügbar.** Alle Disc-Prüfungen liefen gegen einen
-VIDEO\_TS-Ordner, nicht gegen `/dev/sr*`. Nicht nachgeprüft sind daher:
+- **DVD-Analysedauer weiterhin ungemessen.** `scan_dvd_source()` ruft für
+  **jeden** Titel einzeln `ffprobe -f dvdvideo` auf; gegen einen Ordner sind das
+  35 ms. Aus dem BD-Wert hochgerechnet wären es an echter Hardware ~2,5 s pro
+  Titel, also **~75 s bei einer 30-Titel-DVD**. Die Analyse läuft im Hintergrund
+  und ist jederzeit abbrechbar (Prüfung des Abbruchsignals alle 100 ms), die
+  Anwendung blockiert also nicht. **Entscheidung: erst an einer echten DVD
+  messen, vorher nichts ändern** — die Zahl ist hochgerechnet, nicht gemessen.
+- Nicht geprüft: BD+, CSS, zerkratzte Discs, Schichtwechsel, BD-J-Titel.
+- Das Playlist-Limit und die ISO-Signaturheuristik bestehen unverändert fort.
 
-- Blu-ray insgesamt. Sämtliche BD-Korrekturen (Playlist 00000, BDMV-Basispfad,
-  libbluray-Vorgabetitel, `bluray:`-Vorschau) sind **ausschließlich durch Tests
-  mit Attrappen belegt**, nie an einer Disc.
-- AACS/BD+, CSS, zerkratzte Discs, Schichtwechsel.
-- **Die Laufzeit der neuen DVD-Analyse an echter Hardware.** `scan_dvd_source()`
-  ruft jetzt für **jeden** Titel einzeln `ffprobe -f dvdvideo` auf. Gegen den
-  Ordner sind das 35 ms pro Titel; an einem physischen Laufwerk, das für jeden
-  Titel neu positionieren muss, kann eine DVD mit 30–40 Titeln spürbar länger
-  brauchen als die eine `lsdvd`-Abfrage von vorher. Die Analyse läuft im
-  Hintergrund und ist jederzeit abbrechbar (Prüfung des Abbruchsignals alle
-  100 ms), die Anwendung blockiert also nicht — aber die Wartezeit ist real und
-  bisher ungemessen. **Das ist die erste Stelle, die an echter Hardware
-  nachzumessen ist.**
-
-Das Playlist-Limit und die ISO-Signaturheuristik bestehen unverändert fort.
 Dieser Bericht ist kein Nachweis, dass die Anwendung insgesamt fehlerfrei ist.
 
 ## Installation
