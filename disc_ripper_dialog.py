@@ -525,10 +525,17 @@ class DiscRipperDialog(QDialog):
             self.combo_cd_codec.setVisible(False)
             self.radio_mode_iso.setEnabled(source_path.startswith("/dev/"))
 
-            # CSS Verschlüsselungsprüfung
+            # CSS-Verschlüsselungsprüfung und nicht-tödliche Analysewarnungen
+            # teilen sich die Hinweiszeile — beide sind Hinweise, keine Fehler.
+            hints = []
             has_dvdcss, css_msg = check_dvd_encryption_support()
             if not has_dvdcss:
-                self.lbl_warn_encryption.setText(tr("Hinweis: {msg}", msg=css_msg))
+                hints.append(css_msg)
+            if res.warning:
+                hints.append(res.warning)
+            if hints:
+                self.lbl_warn_encryption.setText(
+                    tr("Hinweis: {msg}", msg="\n".join(hints)))
                 self.lbl_warn_encryption.setVisible(True)
             else:
                 self.lbl_warn_encryption.setVisible(False)

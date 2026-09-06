@@ -172,6 +172,81 @@ class AudioCdOverwriteTests(unittest.TestCase):
                              audio_cd_output_filename(track, "flac"))
 
 
+class TitleStreamProbeTests(unittest.TestCase):
+    """An echter Hardware gemessen: lsdvd meldet fuer den Hauptfilm 6 Untertitel,
+    FFmpeg 12 -- Position 4 ist bei lsdvd deutsch, bei FFmpeg englisch. Faellt die
+    Abfrage auf lsdvd zurueck, rippt der Nutzer stillschweigend die falsche Sprache."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Ohne QApplication stuerzt jedes Widget dieser Klasse mit einem
+        # Speicherauszug ab. Fehlte sie, lief die Klasse nur dann durch, wenn
+        # zufaellig eine andere Testklasse vorher eine angelegt hatte.
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_cold_drive_timeout_is_retried_before_giving_up(self):
+        calls = []
+
+        def probe(path, max_titles=99, title_numbers=None, timeout=10):
+            calls.append(timeout)
+            result = om.DiscInspectionResult(source_path=path, disc_type=om.DiscType.DVD_VIDEO)
+            if len(calls) > 1:                       # zweiter Versuch, Laufwerk dreht
+                result.video_titles = [om.VideoTitleInfo(title_num=1, duration_sec=60)]
+            return result
+
+        with patch("optical_media.probe_dvd_titles_ffprobe", side_effect=probe):
+            got = om._probe_dvd_title_streams("/dev/sr0", 1)
+        self.assertIsNotNone(got, "nach dem Anlaufen des Laufwerks aufgegeben")
+        self.assertEqual(calls, [om.DVD_TITLE_PROBE_TIMEOUT, om.DVD_TITLE_PROBE_RETRY_TIMEOUT])
+        self.assertGreater(om.DVD_TITLE_PROBE_TIMEOUT, 10,
+                           "10 s reichen am kalten Laufwerk gemessen nicht")
+
+    def test_unconfirmed_streams_are_reported_instead_of_silently_kept(self):
+        from test_optical_media import LSDVD_OY_FIXTURE
+        run = subprocess.CompletedProcess([], 0, LSDVD_OY_FIXTURE, "")
+        with patch("optical_media._run_inspection_command", return_value=run), \
+             patch("optical_media._probe_dvd_title_streams", return_value=None):
+            result = om.scan_dvd_source("/dev/sr0")
+        self.assertTrue(result.video_titles, "Titel duerfen nicht verloren gehen")
+        self.assertTrue(result.warning, "stiller Rueckfall auf lsdvds Spurreihenfolge")
+        self.assertIn("abweichen", result.warning)
+        # Als error getarnt waere die Warnung schaedlich: der Dialog leert dann
+        # die Tabelle und sperrt den Aktionsknopf -- die Disc waere unrippbar.
+        self.assertIsNone(result.error)
+
+    def test_warning_keeps_the_disc_rippable_and_is_shown(self):
+        """Die Warnung darf die Titeltabelle nicht leeren."""
+        dialog = _dialog()
+        try:
+            dialog.current_source = "/dev/sr0"
+            dialog.inspection_result = om.DiscInspectionResult(
+                source_path="/dev/sr0", disc_type=om.DiscType.DVD_VIDEO,
+                disc_label="TESTDISC", warning="Spurliste für Titel 1 unbestätigt.",
+                video_titles=[om.VideoTitleInfo(title_num=1, duration_sec=3600)])
+            dialog._display_inspection_result()
+            self.assertEqual(dialog.table_titles.rowCount(), 1, "Titel ausgeblendet")
+            self.assertTrue(dialog.btn_action.isEnabled(), "Aktionsknopf gesperrt")
+            # isVisible() ist bei einem nie gezeigten Dialog immer False —
+            # isVisibleTo() prueft, ob das Label beim Anzeigen sichtbar waere.
+            self.assertTrue(dialog.lbl_warn_encryption.isVisibleTo(dialog))
+            self.assertIn("unbestätigt", dialog.lbl_warn_encryption.text())
+        finally:
+            dialog.close()
+
+    def test_confirmed_streams_replace_the_lsdvd_order(self):
+        from test_optical_media import LSDVD_OY_FIXTURE
+        run = subprocess.CompletedProcess([], 0, LSDVD_OY_FIXTURE, "")
+        actual = om.VideoTitleInfo(
+            title_num=1, duration_sec=60,
+            subtitle_streams=[om.SubtitleStreamInfo(stream_idx=i, langcode="ger")
+                              for i in range(12)])
+        with patch("optical_media._run_inspection_command", return_value=run), \
+             patch("optical_media._probe_dvd_title_streams", return_value=actual):
+            result = om.scan_dvd_source("/dev/sr0")
+        self.assertIsNone(result.error)
+        self.assertEqual(len(result.video_titles[0].subtitle_streams), 12)
+
+
 class FruitlessProbeTests(unittest.TestCase):
     """Eine Quelle ohne lesbaren Titel durfte 99-mal in den 10-Sekunden-Ablauf
     laufen — bis zu 16 Minuten mit stehendem Fortschrittsbalken."""

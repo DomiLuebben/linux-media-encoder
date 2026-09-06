@@ -173,6 +173,10 @@ class DiscInspectionResult:
     video_titles: List[VideoTitleInfo] = field(default_factory=list)
     main_title_idx: int = -1
     error: Optional[str] = None
+    # Nicht toedlich: die Titel sind brauchbar, aber etwas daran ist unsicher.
+    # Gehoert NICHT nach error -- der Dialog leert dabei die Tabelle und sperrt
+    # den Aktionsknopf, die Disc waere dann gar nicht mehr rippbar.
+    warning: Optional[str] = None
 
 
 # --- LAUFWERKSERKENNUNG & HARDWARE-ABSTRAKTION ---
@@ -615,14 +619,30 @@ def scan_dvd_source(source_path: str) -> DiscInspectionResult:
             result = parse_lsdvd_output(res.stdout)
             result.source_path = source_path
             if not result.error and result.video_titles:
-                # FFmpeg may expose several viewport variants for one DVD
-                # subtitle. Use the actual demuxer's order, not lsdvd's IDs.
+                # FFmpeg legt fuer EINE DVD-Untertitelspur mehrere
+                # Darstellungsvarianten als eigene Streams offen. An einer
+                # echten Disc gemessen: lsdvd meldet 6 Untertitel, ffmpeg 12 --
+                # Position 4 ist bei lsdvd deutsch, bei ffmpeg englisch. Wer
+                # hier lsdvds Nummern nimmt, rippt die falsche Sprache.
+                unresolved = []
                 for title in result.video_titles:
-                    probed = probe_dvd_titles_ffprobe(source_path, title_numbers=[title.title_num])
-                    if probed.video_titles:
-                        actual = probed.video_titles[0]
-                        title.audio_streams = actual.audio_streams
-                        title.subtitle_streams = actual.subtitle_streams
+                    actual = _probe_dvd_title_streams(source_path, title.title_num)
+                    if actual is None:
+                        unresolved.append(title.title_num)
+                        continue
+                    title.audio_streams = actual.audio_streams
+                    title.subtitle_streams = actual.subtitle_streams
+                if unresolved:
+                    # Stillschweigend auf lsdvds Reihenfolge zurueckfallen hiesse,
+                    # dem Nutzer eine Spurliste zu zeigen, die beim Rippen nicht
+                    # gilt. Als Warnung, nicht als Fehler: die Titel bleiben
+                    # rippbar, nur die Spurwahl ist bei ihnen unsicher.
+                    result.warning = (
+                        "Die Spurliste konnte für Titel "
+                        + ", ".join(str(n) for n in unresolved)
+                        + " nicht vom Laufwerk bestätigt werden. Bei diesen Titeln kann die "
+                        "angezeigte Ton- und Untertitelauswahl von der tatsächlichen abweichen."
+                    )
                 return result
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
         pass
@@ -630,17 +650,41 @@ def scan_dvd_source(source_path: str) -> DiscInspectionResult:
     return probe_dvd_titles_ffprobe(source_path)
 
 
+# Anlaufzeit des Laufwerks, nicht Rechenzeit: grosszuegig bemessen, damit die
+# erste Abfrage nicht in den Ablauf laeuft. Warme Abfragen dauern rund 2 s.
+DVD_TITLE_PROBE_TIMEOUT = 30
+DVD_TITLE_PROBE_RETRY_TIMEOUT = 60
+
+
+def _probe_dvd_title_streams(source_path: str, title_num: int):
+    """Holt die tatsaechliche Spurliste EINES Titels vom Demuxer.
+
+    Ein kaltes Laufwerk braucht fuer die erste Abfrage ein Vielfaches der
+    spaeteren: an echter Hardware gemessen 10 s und 7,8 s fuer die ersten
+    beiden Titel, danach 1,7-2,2 s. Mit den urspruenglichen 10 s Zeitablauf
+    lief die erste Abfrage deshalb regelmaessig ab. Ein zweiter Versuch kostet
+    nur dann etwas, wenn der erste wirklich fehlschlaegt -- und das Laufwerk
+    dreht dann bereits.
+    """
+    for timeout in (DVD_TITLE_PROBE_TIMEOUT, DVD_TITLE_PROBE_RETRY_TIMEOUT):
+        probed = probe_dvd_titles_ffprobe(
+            source_path, title_numbers=[title_num], timeout=timeout)
+        if probed.video_titles:
+            return probed.video_titles[0]
+    return None
+
+
 def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 99,
-                            title_numbers=None) -> DiscInspectionResult:
+                            title_numbers=None, timeout: int = 10) -> DiscInspectionResult:
     """
     Liest DVD-Titel via 'ffprobe -f dvdvideo -title N' sequentiell aus.
     """
     result = DiscInspectionResult(source_path=source_path, disc_type=DiscType.DVD_VIDEO)
     max_duration = -1.0
     main_idx = -1
-    # Jeder Versuch darf 10 s laufen. Ohne diese Schranke duerfte eine Quelle,
-    # die gar keine DVD ist (oder eine unlesbare Disc), max_titles mal in den
-    # Zeitablauf laufen -- bei 99 Titeln bis zu 16 Minuten. Billige Fehlschlaege
+    # Ohne diese Schranke duerfte eine Quelle, die gar keine DVD ist (oder eine
+    # unlesbare Disc), max_titles mal in den Zeitablauf laufen -- bei 99 Titeln
+    # und 10 s je Versuch bis zu 16 Minuten. Billige Fehlschlaege
     # (Rueckgabewert sofort ungleich 0) bleiben davon unberuehrt.
     fruitless_deadline = time.monotonic() + 30.0
 
@@ -654,7 +698,7 @@ def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 99,
             "-i", source_path,
         ]
         try:
-            res = _run_inspection_command(cmd, capture_output=True, text=True, timeout=10)
+            res = _run_inspection_command(cmd, capture_output=True, text=True, timeout=timeout)
             if res.returncode != 0:
                 if result.video_titles or time.monotonic() > fruitless_deadline:
                     break

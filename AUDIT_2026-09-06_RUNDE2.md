@@ -183,16 +183,77 @@ Nicht LME zuzurechnen: FFmpeg gibt für diese Disc **weder Sprach-Tags noch
 Kapitel** heraus (`tags={}` bereits auf ffprobe-Ebene). Die Anzeige „Unbekannt"
 gibt das korrekt wieder, statt etwas zu erfinden.
 
+## Nachtrag 2 — DVD an echter Hardware gemessen (Version 1.12.2)
+
+Gemessen an derselben Hardware mit der DVD `MR_MRS_SMITH` (12 Titel, Hauptfilm
+Titel 12: 1:54:52, 19 Kapitel, 6 Ton- und 6 Untertitelspuren laut lsdvd).
+
+### Die Analysedauer — und wofür sie gut ist
+
+| | |
+|---|---|
+| `lsdvd` allein | 2,9 s |
+| `scan_dvd_source()` gesamt, 12 Titel | **39,7 s** (kaltes Laufwerk) / 32,2 s (warm) |
+| ffprobe je Titel | 10,1 s · 7,8 s · dann 1,7–2,2 s |
+
+Die Hochrechnung aus dem BD-Wert (~75 s bei 30 Titeln) lag zu hoch: der teure
+Teil ist die **Anlaufzeit des Laufwerks**, nicht die Zahl der Titel.
+
+**Der Durchgang ist nicht optional.** Für den Hauptfilm meldet `lsdvd` **6**
+Untertitel, FFmpeg **12** — der `dvdvideo`-Demuxer legt für eine DVD-Spur
+mehrere Darstellungsvarianten als eigene Streams offen:
+
+```
+lsdvd   Position 4  ->  de      (deutsch)
+ffmpeg  -map 0:s:4  ->  eng     (englisch)
+```
+
+Wer hier lsdvds Nummern nimmt, wählt Deutsch und rippt Englisch. Die 39,7 s
+kaufen also die Richtigkeit der Spurauswahl. **Entscheidung: unverändert
+lassen.**
+
+### 🔴 Befund 6 — kaltes Laufwerk lief in den Zeitablauf und fiel still zurück
+
+Die Messung hat einen Fehler mitgebracht: die **erste** Abfrage brauchte 10,07 s
+und traf damit exakt den fest verdrahteten Zeitablauf von 10 s. `scan_dvd_source()`
+behielt daraufhin **stillschweigend lsdvds Spurliste** — genau die Reihenfolge,
+deretwegen der Durchgang existiert. Am kalten Laufwerk ist das reproduzierbar;
+träfe es den Hauptfilm statt Titel 1, bekäme der Nutzer wortlos die falsche
+Sprache.
+
+**Behoben:** Zeitablauf auf 30 s (warme Abfragen brauchen ~2 s, die Grenze
+kostet im Normalfall nichts), plus **ein** zweiter Versuch mit 60 s, wenn der
+erste leer zurückkommt — der kostet nur bei echtem Fehlschlag etwas, und dann
+dreht das Laufwerk bereits. Bleibt ein Titel unbestätigt, sagt der Dialog das
+jetzt in der Hinweiszeile, statt eine Spurliste zu zeigen, die beim Rippen nicht
+gilt.
+
+**Beinahe-Fehler bei genau dieser Korrektur:** Der erste Entwurf schrieb die
+Meldung nach `result.error`. `_display_inspection_result()` behandelt `error`
+als tödlich — leert die Titeltabelle und sperrt den Aktionsknopf. Die Disc wäre
+damit **gar nicht mehr rippbar** gewesen, also schlimmer als der stille
+Rückfall. Deshalb gibt es jetzt ein eigenes Feld `warning`, das sich die
+Hinweiszeile mit der CSS-Prüfung teilt. Ein Test hält fest, dass die Warnung die
+Tabelle **nicht** leert.
+
+**Nebenbefund:** Die neue Testklasse legte keine `QApplication` an und lief nur
+durch, weil zufällig eine andere Klasse vorher eine erzeugt hatte — allein
+gestartet erzeugte sie einen Speicherauszug. Behoben; anschließend wurde **jede**
+Testdatei einzeln gestartet, alle laufen eigenständig durch.
+
+### Am echten Laufwerk nachgewiesen
+
+| Prüfung | Ergebnis |
+|---|---|
+| 12 Titel erkannt, Hauptfilm korrekt bestimmt | Titel 12, 114,9 min, 19 Kapitel |
+| Spurliste vom Demuxer bestätigt | 6 Ton (ger/ger/eng/eng/eng/eng), **12** Untertitel |
+| Zweistufiger Rip, Auswahl Deutsch (Ton 0 / UT 0) | Ziel enthält `ger` / `ger` |
+| Zweistufiger Rip, Auswahl Englisch (Ton 2 / UT 4) | Ziel enthält `eng` / `eng` |
+
 ## Grenzen
 
-- **DVD-Analysedauer weiterhin ungemessen.** `scan_dvd_source()` ruft für
-  **jeden** Titel einzeln `ffprobe -f dvdvideo` auf; gegen einen Ordner sind das
-  35 ms. Aus dem BD-Wert hochgerechnet wären es an echter Hardware ~2,5 s pro
-  Titel, also **~75 s bei einer 30-Titel-DVD**. Die Analyse läuft im Hintergrund
-  und ist jederzeit abbrechbar (Prüfung des Abbruchsignals alle 100 ms), die
-  Anwendung blockiert also nicht. **Entscheidung: erst an einer echten DVD
-  messen, vorher nichts ändern** — die Zahl ist hochgerechnet, nicht gemessen.
-- Nicht geprüft: BD+, CSS, zerkratzte Discs, Schichtwechsel, BD-J-Titel.
+- Nicht geprüft: BD+, zerkratzte Discs, Schichtwechsel, BD-J-Titel. CSS wurde
+  nur mit dieser einen DVD geprüft.
 - Das Playlist-Limit und die ISO-Signaturheuristik bestehen unverändert fort.
 
 Dieser Bericht ist kein Nachweis, dass die Anwendung insgesamt fehlerfrei ist.
