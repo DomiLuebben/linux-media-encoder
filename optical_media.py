@@ -539,19 +539,19 @@ def parse_lsdvd_output(stdout_content: str) -> DiscInspectionResult:
         for c in t.get("chapter", []):
             c_num = int(c.get("ix", len(chapters) + 1))
             c_len = float(c.get("length", 0.0) or 0.0)
-            chapters.append(ChapterInfo(chapter_num=c_num, duration_sec=c_len))
+            chapters.append(ChapterInfo(chapter_num=c_num, duration_sec=c_len,
+                                       start_sec=sum(ch.duration_sec for ch in chapters)))
 
         # Audiospuren
         audio_streams = []
         for a_idx, a in enumerate(t.get("audio", [])):
-            s_ix = int(a.get("ix", a_idx + 1))
             lang = str(a.get("language", "Unbekannt") or "Unbekannt")
             lcode = str(a.get("langcode", "und") or "und")
             fmt = str(a.get("format", "ac3") or "ac3")
             channels = int(a.get("channels", 2) or 2)
             freq = int(a.get("frequency", 48000) or 48000)
             audio_streams.append(AudioStreamInfo(
-                stream_idx=s_ix,
+                stream_idx=a_idx,
                 langcode=lcode,
                 language=lang,
                 codec=fmt,
@@ -562,11 +562,10 @@ def parse_lsdvd_output(stdout_content: str) -> DiscInspectionResult:
         # Untertitel
         sub_streams = []
         for s_idx, s in enumerate(t.get("subp", [])):
-            s_ix = int(s.get("ix", s_idx + 1))
             lang = str(s.get("language", "Unbekannt") or "Unbekannt")
             lcode = str(s.get("langcode", "und") or "und")
             sub_streams.append(SubtitleStreamInfo(
-                stream_idx=s_ix,
+                stream_idx=s_idx,
                 langcode=lcode,
                 language=lang,
                 codec="dvd_subtitle",
@@ -607,7 +606,7 @@ def scan_dvd_source(source_path: str) -> DiscInspectionResult:
     """
     try:
         res = _run_inspection_command(
-            ["lsdvd", "-Oy", source_path],
+            ["lsdvd", "-x", "-Oy", source_path],
             capture_output=True,
             text=True,
             timeout=30,
@@ -615,22 +614,37 @@ def scan_dvd_source(source_path: str) -> DiscInspectionResult:
         if res.returncode == 0 and "lsdvd" in res.stdout:
             result = parse_lsdvd_output(res.stdout)
             result.source_path = source_path
-            return result
+            if not result.error and result.video_titles:
+                # FFmpeg may expose several viewport variants for one DVD
+                # subtitle. Use the actual demuxer's order, not lsdvd's IDs.
+                for title in result.video_titles:
+                    probed = probe_dvd_titles_ffprobe(source_path, title_numbers=[title.title_num])
+                    if probed.video_titles:
+                        actual = probed.video_titles[0]
+                        title.audio_streams = actual.audio_streams
+                        title.subtitle_streams = actual.subtitle_streams
+                return result
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
         pass
 
     return probe_dvd_titles_ffprobe(source_path)
 
 
-def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 15) -> DiscInspectionResult:
+def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 99,
+                            title_numbers=None) -> DiscInspectionResult:
     """
     Liest DVD-Titel via 'ffprobe -f dvdvideo -title N' sequentiell aus.
     """
     result = DiscInspectionResult(source_path=source_path, disc_type=DiscType.DVD_VIDEO)
     max_duration = -1.0
     main_idx = -1
+    # Jeder Versuch darf 10 s laufen. Ohne diese Schranke duerfte eine Quelle,
+    # die gar keine DVD ist (oder eine unlesbare Disc), max_titles mal in den
+    # Zeitablauf laufen -- bei 99 Titeln bis zu 16 Minuten. Billige Fehlschlaege
+    # (Rueckgabewert sofort ungleich 0) bleiben davon unberuehrt.
+    fruitless_deadline = time.monotonic() + 30.0
 
-    for title_num in range(1, max_titles + 1):
+    for title_num in (title_numbers if title_numbers is not None else range(1, max_titles + 1)):
         cmd = [
             "ffprobe", "-v", "error",
             "-f", "dvdvideo",
@@ -642,7 +656,7 @@ def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 15) -> DiscInsp
         try:
             res = _run_inspection_command(cmd, capture_output=True, text=True, timeout=10)
             if res.returncode != 0:
-                if title_num > 1 and len(result.video_titles) > 0:
+                if result.video_titles or time.monotonic() > fruitless_deadline:
                     break
                 continue
 
@@ -725,6 +739,8 @@ def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 15) -> DiscInsp
                 max_duration = duration
                 main_idx = len(result.video_titles) - 1
 
+        except InspectionCancelled:
+            raise
         except Exception:
             break
 
@@ -733,6 +749,8 @@ def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 15) -> DiscInsp
         result.main_title_idx = main_idx
 
     result.total_duration_sec = sum(t.duration_sec for t in result.video_titles)
+    if not result.video_titles:
+        result.error = "DVD konnte nicht eingelesen werden."
     return result
 
 

@@ -539,12 +539,47 @@ SUBTITLE_SETTING_KEYS = (
     "subtitles_translate_custom",
 )
 
+# Identitaet der Quelle: welche Disc, welcher Titel, welche Spuren. Gehoert zum
+# Job, nicht zur gewaehlten Vorgabe — und darf nie auf einen anderen Job kopiert
+# werden, sonst zoege ein Job den Titel eines anderen.
+DISC_SETTING_KEYS = (
+    "disc_type", "input_args", "title_num", "audio_stream_idx", "subtitle_stream_idx",
+    "source_width", "source_height", "source_duration", "source_bitrate",
+    "two_stage", "staging_dir", "track_num", "track_title",
+    "track_artist", "track_album",
+)
+
+# Die Fehlertoleranz ist ein Kontrollkaestchen fuer JEDEN Job, auch fuer reine
+# Dateiquellen. Sie ueberlebt deshalb einen Vorgabenwechsel, gehoert aber nicht
+# zur Identitaet der Quelle: "Einstellungen auf alle anwenden" muss sie
+# weiterreichen duerfen.
+PRESET_SURVIVING_KEYS = DISC_SETTING_KEYS + ("ignore_errors",)
+
+
+def _carry_over(new_settings, previous, keys):
+    result = dict(new_settings)
+    result.update({k: previous[k] for k in keys if k in previous})
+    return result
+
+
+def preserve_disc_settings(new_settings, previous):
+    """Vorgabenwechsel: alles, was nicht zur Vorgabe gehoert, bleibt stehen."""
+    return _carry_over(new_settings, previous, PRESET_SURVIVING_KEYS)
+
+
+def preserve_source_identity(new_settings, previous):
+    """Einstellungen von einem Job auf einen anderen kopieren: nur die Identitaet
+    des Zieljobs bleibt stehen, Codier-Optionen kommen von der Quelle."""
+    return _carry_over(new_settings, previous, DISC_SETTING_KEYS)
+
+
 # Nur für einen laufenden Job gültige Zwischenzustände — dürfen nie auf andere
 # Jobs kopiert werden ("Einstellungen auf alle anwenden").
 TRANSIENT_SETTING_KEYS = (
     # Zwischendatei eines Disc-Jobs: ein Pfad aus dem letzten Lauf waere nach
     # einem Neustart wertlos und wuerde Stufe 1 stillschweigend ueberspringen.
     "_staged_source",
+    "_extracted_wav",
     "temp_srt_path",
     "temp_audio_path",
     "_subtitle_ai_stage",
@@ -553,7 +588,7 @@ TRANSIENT_SETTING_KEYS = (
 
 # Quellbezogene Einstellungen (Zuschnitt, Drehung, Schnittmarken): gelten nur
 # für die jeweilige Quelldatei und werden nie auf andere Jobs kopiert.
-SOURCE_SETTING_KEYS = ("crop", "rotate", "trim_start", "trim_end")
+SOURCE_SETTING_KEYS = ("crop", "rotate", "trim_start", "trim_end") + DISC_SETTING_KEYS
 
 # Als Bild-Quelle akzeptierte Dateiendungen (für Default-Preset bei Drag & Drop)
 IMAGE_INPUT_EXTENSIONS = {
@@ -1240,8 +1275,9 @@ def get_ffmpeg_args(input_file, output_file, settings):
             # 0:v würde eingebettete Cover mit durch den Encoder jagen.
             args.extend(["-map", "0:V?"])
         if a_codec != "none":
-            # Nur die erste Tonspur, konsistent zum Standardverhalten ohne Untertitel.
-            args.extend(["-map", "0:a:0?"])
+            audio_idx = settings.get("audio_stream_idx")
+            audio_map = "0:a?" if audio_idx == -1 else f"0:a:{audio_idx if audio_idx is not None else 0}?"
+            args.extend(["-map", audio_map])
         args.extend(["-map", "1:s?"])
 
     if v_codec == "none":

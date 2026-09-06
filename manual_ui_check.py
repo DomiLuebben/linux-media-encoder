@@ -27,8 +27,11 @@ def test_ui():
     print("Testing native menu bar...")
     window.show()
     app.processEvents()
-    menu_titles = [action.text() for action in window.menuBar().actions()]
-    assert menu_titles == ["Datei", "Design", "Ansicht", "Hilfe"], "Native menu bar entries mismatch!"
+    # Der Beschleuniger-Unterstrich gehoert zum Text ("&Datei") und darf die
+    # Pruefung nicht davon abhaengig machen, wo er gerade sitzt.
+    menu_titles = [action.text().replace("&", "") for action in window.menuBar().actions()]
+    assert menu_titles == ["Datei", "Bearbeiten", "Design", "Ansicht", "Warteschlange", "Hilfe"], \
+        f"Native menu bar entries mismatch: {menu_titles}"
     print("Native menu bar works successfully!")
     
     # Create a dummy job to test dialog loading

@@ -1845,7 +1845,7 @@ class MainWindow(QMainWindow):
             ):
                 job["settings"].setdefault(key, value)
         elif defaults is not None:
-            job["settings"] = defaults
+            job["settings"] = presets.preserve_disc_settings(defaults, prev)
         else:
             container = presets.container_from_format_text(text)
             if "settings" not in job or not isinstance(job["settings"], dict):
@@ -1928,7 +1928,7 @@ class MainWindow(QMainWindow):
             keep_rotate = presets.get_rotation(prev)
             keep_subs = {k: prev[k] for k in presets.SUBTITLE_SETTING_KEYS if k in prev}
             keep_trim = {k: prev[k] for k in ("trim_start", "trim_end") if k in prev}
-            job["settings"] = dict(presets.PRESETS[text])
+            job["settings"] = presets.preserve_disc_settings(presets.PRESETS[text], prev)
             job["settings"]["custom_mode"] = False
             job["settings"]["preset_label"] = text
             if job["settings"].get("container") in presets.IMAGE_CONTAINERS:
@@ -1951,7 +1951,7 @@ class MainWindow(QMainWindow):
             prev = job.get("settings", {}) or {}
             keep_subs = {k: prev[k] for k in presets.SUBTITLE_SETTING_KEYS if k in prev}
             keep_trim = {k: prev[k] for k in ("trim_start", "trim_end") if k in prev}
-            job["settings"] = dict(quick_settings)
+            job["settings"] = presets.preserve_disc_settings(quick_settings, prev)
             job["settings"]["custom_mode"] = False
             job["settings"]["preset_label"] = text
             if job["settings"].get("container") not in presets.IMAGE_CONTAINERS:
@@ -2209,7 +2209,7 @@ class MainWindow(QMainWindow):
 
         for idx in target_indexes:
             job = self.jobs[idx]
-            job["settings"] = dict(source_settings)
+            job["settings"] = presets.preserve_source_identity(source_settings, job["settings"])
             self._set_job_output_extension(job, source_settings.get("container", "mp4"))
             self._update_table_row(idx)
 
@@ -3007,6 +3007,12 @@ class MainWindow(QMainWindow):
             return
         job = self.jobs[self.current_job_idx]
 
+        if not self.is_running:
+            self._cleanup_staged_source(job)
+            job["status"] = "Abgebrochen"
+            self._update_table_row(self.current_job_idx)
+            return
+
         if not success:
             self._cleanup_staged_source(job)
             self._fail_current_job(tr("Auslesen der Disc fehlgeschlagen: {error}", error=message))
@@ -3016,7 +3022,17 @@ class MainWindow(QMainWindow):
         job["progress"] = 0.0
         self._update_table_row(self.current_job_idx)
         # Entkoppelt weiterreichen, damit der beendete Worker sauber abgebaut wird.
-        QTimer.singleShot(0, lambda: self._start_current_ffmpeg_job(job))
+        QTimer.singleShot(0, lambda: self._start_prepared_disc_job(job))
+
+    def _start_prepared_disc_job(self, job):
+        if (not self.is_running or self.current_job_idx < 0
+                or self.current_job_idx >= len(self.jobs)
+                or self.jobs[self.current_job_idx] is not job):
+            return
+        if self._job_needs_subtitle_generation(job):
+            self._run_subtitle_pipeline(job)
+        else:
+            self._start_current_ffmpeg_job(job)
 
     def _cleanup_staged_source(self, job):
         """Entfernt die Zwischendateien eines Disc-Jobs (Remux oder CDDA-WAV)."""
@@ -3214,7 +3230,23 @@ class MainWindow(QMainWindow):
         self.sub_process.errorOccurred.connect(self._on_subtitle_process_failed_to_start)
 
         # Audio extrahieren (mono, 16kHz MP3)
-        args = ["-y", "-i", job["input_file"], "-vn", "-acodec", "libmp3lame", "-ar", "16000", "-ac", "1", temp_audio]
+        source = job["input_file"]
+        settings = dict(job["settings"])
+        staged = settings.get("_staged_source")
+        if staged and os.path.exists(staged):
+            source = staged
+            settings.pop("disc_type", None)
+            settings.pop("input_args", None)
+            if settings.get("audio_stream_idx") is not None and settings["audio_stream_idx"] >= 0:
+                settings["audio_stream_idx"] = 0
+        for key in ("trim_start", "trim_end", "crop"):
+            settings.pop(key, None)
+        if settings.get("audio_stream_idx") == -1:
+            settings["audio_stream_idx"] = 0  # transcribe one language, not mixed tracks
+        settings.update(container="mp3", video_codec="none", audio_codec="libmp3lame",
+                        audio_bitrate="128k", subtitles_enabled=False, subtitle_stream_idx=None)
+        args = presets.get_ffmpeg_args(source, temp_audio, settings)
+        args[-1:-1] = ["-ar", "16000", "-ac", "1"]
         self.console.append(f"[LME KI] Extrahiere Audiospur...")
         self.sub_process.start("ffmpeg", args)
 

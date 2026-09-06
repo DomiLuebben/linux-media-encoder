@@ -3,6 +3,7 @@
 
 
 EN_US = {
+    "Mehrere Titel haben denselben Zieldateinamen. Bitte die Titel unterschiedlich benennen.": "Several titles have the same output filename. Please give the titles different names.",
     "Analyse abgebrochen.": "Analysis cancelled.",
     " Start": " Start",
     " Stopp": " Stop",
@@ -428,6 +429,7 @@ EN_US = {
 
 
 FR_FR = {
+    "Mehrere Titel haben denselben Zieldateinamen. Bitte die Titel unterschiedlich benennen.": "Plusieurs titres ont le même nom de fichier de sortie. Veuillez leur donner des noms différents.",
     "Analyse abgebrochen.": "Analyse annulée.",
     " Start": " Démarrer",
     " Stopp": " Arrêter",
@@ -993,4 +995,3 @@ FR_FR.update({
     "Schwarze Balken erkannt!\nZuschnitt auf {w}×{h} px (ab {x}, {y}) gesetzt.": "Bandes noires détectées !\nRecadrage défini sur {w}×{h} px (à {x}, {y}).",
     "Keine schwarzen Balken erkannt — das Bild füllt bereits den gesamten Frame.": "Aucune bande noire détectée — la vidéo remplit déjà tout le cadre.",
 })
-

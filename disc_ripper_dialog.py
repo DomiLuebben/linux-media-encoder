@@ -44,7 +44,7 @@ from optical_media import (
     check_bluray_encryption_support,
     get_optical_media_size,
 )
-from disc_rip_worker import AudioCdRipWorker, IsoDumpWorker
+from disc_rip_worker import AudioCdRipWorker, IsoDumpWorker, audio_cd_output_filename
 from ffmpeg_worker import FFmpegWorker
 
 
@@ -68,6 +68,8 @@ class DiscRipperDialog(QDialog):
         self.active_worker: Optional[Any] = None
         self.pending_video_jobs: List[tuple[list[str], str, str]] = []
         self.current_video_job_idx: int = -1
+        self._is_ripping = False
+        self._closing = False
         self._inspection_task = None
         self._inspection_timer = QTimer(self)
         self._inspection_timer.setInterval(50)
@@ -424,6 +426,8 @@ class DiscRipperDialog(QDialog):
 
     def _inspect_and_display_source(self, source_path: str):
         """Start a cancellable scan without blocking the Qt event loop."""
+        if self._is_ripping:
+            return
         if self._inspection_task is not None:
             self._inspection_task["cancel"].set()
         source_path = optical_media.find_bdmv_root(source_path) or source_path
@@ -779,7 +783,7 @@ class DiscRipperDialog(QDialog):
             return
 
         jobs_to_queue = []
-        disc_label = res.disc_label or "Disc"
+        disc_label = self._safe_disc_label(res.disc_label)
 
         if res.disc_type == DiscType.AUDIO_CD:
             # Gemeinsame Codec-Ermittlung für beide Wege: früher kannte dieser
@@ -903,6 +907,13 @@ class DiscRipperDialog(QDialog):
             # fehlte hier ALAC und Bitraten (AAC 256k, Opus 160k) wurden ignoriert.
             codec_key = optical_media.audio_codec_key_from_label(self.combo_cd_codec.currentText())
             bitrate = optical_media.audio_bitrate_from_label(self.combo_cd_codec.currentText())
+            # Wie im Video- und ISO-Zweig: der Worker ersetzt vorhandene Dateien
+            # kommentarlos, also vorher fragen statt hinterher zu erklaeren.
+            if not self._confirm_rip_outputs(
+                [os.path.join(out_dir, audio_cd_output_filename(t, codec_key)) for t in selected_tracks]
+            ):
+                self._set_ui_ripping_state(False)
+                return
             self.active_worker = AudioCdRipWorker(
                 device_path=self.current_source or "/dev/sr0",
                 tracks=selected_tracks,
@@ -918,7 +929,7 @@ class DiscRipperDialog(QDialog):
             self.active_worker.start()
 
         elif res.disc_type in (DiscType.DVD_VIDEO, DiscType.BLURAY):
-            disc_label = res.disc_label or "Disc"
+            disc_label = self._safe_disc_label(res.disc_label)
             self.pending_video_jobs = []
             for row in selected_rows:
                 title = res.video_titles[row]
@@ -963,6 +974,9 @@ class DiscRipperDialog(QDialog):
                 return
 
             self.current_video_job_idx = 0
+            if not self._confirm_rip_outputs([job[1] for job in self.pending_video_jobs]):
+                self._set_ui_ripping_state(False)
+                return
             self._run_next_video_job()
 
         else:
@@ -1006,7 +1020,7 @@ class DiscRipperDialog(QDialog):
             self._on_direct_rip_finished(False, msg)
             return
         self.current_video_job_idx += 1
-        self._run_next_video_job()
+        QTimer.singleShot(0, lambda: self._run_next_video_job() if self._is_ripping else None)
 
     def _start_iso_dump(self, out_dir: str):
         """Startet den 1:1 ISO-Abbild-Dump via dd."""
@@ -1014,9 +1028,11 @@ class DiscRipperDialog(QDialog):
             QMessageBox.warning(self, tr("Ungültiges Laufwerk"), tr("Ein 1:1 ISO-Abbild kann nur von einem physischen optischen Laufwerk erstellt werden."))
             return
 
-        label = (self.inspection_result.disc_label if self.inspection_result else "") or "disc_backup"
-        safe_label = "".join(c for c in label if c.isalnum() or c in " -_.").strip()
+        label = self.inspection_result.disc_label if self.inspection_result else ""
+        safe_label = self._safe_disc_label(label, fallback="disc_backup")
         out_iso = os.path.join(out_dir, f"{safe_label}.iso")
+        if not self._confirm_rip_outputs([out_iso]):
+            return
 
         self._set_ui_ripping_state(True)
         self.txt_log.clear()
@@ -1043,6 +1059,29 @@ class DiscRipperDialog(QDialog):
         for widget in getattr(self, "_stage_row_widgets", ()):
             widget.setEnabled(bool(checked))
         QSettings("LinuxMediaEncoder", "LinuxMediaEncoder").setValue("two_stage_rip", bool(checked))
+
+    @staticmethod
+    def _safe_disc_label(label, fallback="Disc"):
+        """Dateinamensicheres Label. Bleibt nach dem Filtern nichts uebrig,
+        greift der Rueckfallname — sonst entstuende eine versteckte Datei."""
+        return "".join(c for c in (label or "") if c.isalnum() or c in " -_.").strip(" .") or fallback
+
+    def _confirm_rip_outputs(self, paths):
+        normalized = [os.path.realpath(p) for p in paths]
+        if len(set(normalized)) != len(normalized):
+            QMessageBox.warning(self, tr("Ungültige Ausgabedatei"),
+                                tr("Mehrere Titel haben denselben Zieldateinamen. Bitte die Titel unterschiedlich benennen."))
+            return False
+        existing = [p for p in paths if os.path.lexists(p)]
+        if not existing:
+            return True
+        return QMessageBox.question(
+            self, tr("Vorhandene Dateien überschreiben?"),
+            tr("{count} Zieldatei(en) existieren bereits und werden überschrieben:\n\n"
+               "{files}\n\nFortfahren?", count=len(existing), files="\n".join(existing)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) == QMessageBox.StandardButton.Yes
 
     def _on_ignore_errors_toggled(self, checked):
         """Fehlertoleranz-Einstellung persistent speichern."""
@@ -1313,6 +1352,9 @@ class DiscRipperDialog(QDialog):
 
     def _on_direct_rip_finished(self, success: bool, message: str):
         self._set_ui_ripping_state(False)
+        self.active_worker = None
+        if self._closing:
+            return
         if success:
             self.prog_bar.setValue(100)
             self.lbl_status.setText(tr("Fertig: {msg}", msg=message))
@@ -1337,13 +1379,24 @@ class DiscRipperDialog(QDialog):
 
     def reject(self):
         self._cancel_inspection()
+        self._stop_for_close()
         super().reject()
 
     def closeEvent(self, event):
         self._cancel_inspection()
+        self._stop_for_close()
         super().closeEvent(event)
 
+    def _stop_for_close(self):
+        self._closing = True
+        if self._is_ripping:
+            self._is_ripping = False
+            if self.active_worker:
+                self.active_worker.stop()
+
     def _set_ui_ripping_state(self, is_ripping: bool):
+        self._is_ripping = is_ripping
+        self.source_group.setEnabled(not is_ripping)
         self.btn_action.setEnabled(not is_ripping)
         self.btn_stop.setVisible(is_ripping)
         self.table_titles.setEnabled(not is_ripping)

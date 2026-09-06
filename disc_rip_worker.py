@@ -18,6 +18,14 @@ import optical_media
 from optical_media import AudioTrackInfo, build_audio_cd_rip_command, build_audio_encode_args, build_iso_dump_command
 
 
+def audio_cd_output_filename(track: AudioTrackInfo, codec: str) -> str:
+    """Zieldateiname eines CD-Tracks. Einzige Quelle fuer Worker und Dialog —
+    der Dialog muss vor dem Start dieselben Namen auf Ueberschreiben pruefen."""
+    ext = optical_media.audio_file_extension(codec)
+    safe_title = re.sub(r'[^\w\-_\. ]', '_', track.title or f"Track_{track.track_num:02d}").strip()
+    return f"{track.track_num:02d} - {safe_title}.{ext}"
+
+
 class AudioCdRipWorker(QObject):
     """
     Rippt ausgewählte Audio-CD-Tracks via cdparanoia und encodiert sie via FFmpeg
@@ -107,8 +115,7 @@ class AudioCdRipWorker(QObject):
         # landete beides in einer .aac-Datei, ALAC sogar in .wav (der alte
         # Ausdruck kannte alac nicht).
         ext = optical_media.audio_file_extension(self.codec)
-        safe_title = re.sub(r'[^\w\-_\. ]', '_', track.title or f"Track_{track.track_num:02d}").strip()
-        final_filename = f"{track.track_num:02d} - {safe_title}.{ext}"
+        final_filename = audio_cd_output_filename(track, self.codec)
         self._final_out_file = os.path.join(self.output_dir, final_filename)
         self._tmp_out_file = os.path.join(self.output_dir, f".lme_tmp_enc_{track.track_num}_{uid}.{ext}")
 
@@ -304,11 +311,17 @@ class IsoDumpWorker(QObject):
 
         if exit_code == 0 and exit_status == QProcess.ExitStatus.NormalExit:
             try:
-                if os.path.exists(self._tmp_iso_path):
-                    os.replace(self._tmp_iso_path, self.output_iso_path)
+                size = os.path.getsize(self._tmp_iso_path)
+                if size == 0 or (self.total_size_bytes > 0 and size != self.total_size_bytes):
+                    raise OSError(f"Unvollständiges ISO-Abbild ({size} von {self.total_size_bytes} Bytes).")
+                os.replace(self._tmp_iso_path, self.output_iso_path)
                 self.progress_updated.emit(100.0, "", "Fertig")
                 self.finished.emit(True, f"1:1 ISO-Abbild erfolgreich erstellt: {self.output_iso_path}")
             except OSError as e:
+                try:
+                    os.remove(self._tmp_iso_path)
+                except OSError:
+                    pass
                 self.finished.emit(False, f"Konnte ISO-Datei nicht speichern: {e}")
         else:
             if os.path.exists(self._tmp_iso_path):

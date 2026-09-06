@@ -122,7 +122,7 @@ class FFmpegWorker(QObject):
 
     def stop(self):
         """Bricht den laufenden FFmpeg-Prozess ab."""
-        if self.process and self.process.state() == QProcess.ProcessState.Running:
+        if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
             self.status_changed.emit("Breche ab...")
             # Den regulären finished-Handler trennen, damit das Prozessende
             # nicht ein zweites (widersprüchliches) finished-Signal auslöst.

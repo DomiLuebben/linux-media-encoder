@@ -1168,7 +1168,7 @@ class ExportSettingsDialog(QDialog):
             keep_subs = {k: self.settings[k] for k in presets.SUBTITLE_SETTING_KEYS if k in self.settings}
             keep_trim = {k: self.settings[k] for k in ("trim_start", "trim_end") if k in self.settings}
             keep_rotate = self.settings.get("rotate")
-            self.settings = dict(presets.PRESETS[text])
+            self.settings = presets.preserve_disc_settings(presets.PRESETS[text], self.settings)
             self.settings["custom_mode"] = False
             self.settings["preset_label"] = text
             if keep_rotate is not None:
@@ -1189,7 +1189,7 @@ class ExportSettingsDialog(QDialog):
         if quick_settings is not None:
             keep_subs = {k: self.settings[k] for k in presets.SUBTITLE_SETTING_KEYS if k in self.settings}
             keep_trim = {k: self.settings[k] for k in ("trim_start", "trim_end") if k in self.settings}
-            self.settings = dict(quick_settings)
+            self.settings = presets.preserve_disc_settings(quick_settings, self.settings)
             self.settings["custom_mode"] = False
             self.settings["preset_label"] = text
             if self.settings.get("container") not in presets.IMAGE_CONTAINERS:
@@ -1812,6 +1812,8 @@ class ExportSettingsDialog(QDialog):
         info = getattr(self, "source_info", None)
         if info and info.get("duration"):
             return info["duration"]
+        if self.settings.get("disc_type"):
+            return float(self.settings.get("source_duration") or 0.0)
         if not input_file or not os.path.exists(input_file):
             return 0.0
         try:
@@ -1849,6 +1851,10 @@ class ExportSettingsDialog(QDialog):
             return
         self._probe_result = None
         input_file = self.input_file
+        input_options = list(self.settings.get("input_args") or [])
+        if self.settings.get("disc_type") == "bluray":
+            from optical_media import find_bdmv_root
+            input_file = f"bluray:{find_bdmv_root(input_file) or input_file}"
         holder = self
 
         def work():
@@ -1856,7 +1862,7 @@ class ExportSettingsDialog(QDialog):
             try:
                 r = subprocess.run(
                     ["ffprobe", "-v", "error", "-print_format", "json",
-                     "-show_format", "-show_streams", input_file],
+                     "-show_format", "-show_streams"] + input_options + ["-i", input_file],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15,
                 )
                 holder._probe_result = r.stdout if r.returncode == 0 else ""
