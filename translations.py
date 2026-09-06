@@ -3,6 +3,7 @@
 
 
 EN_US = {
+    "Analyse abgebrochen.": "Analysis cancelled.",
     " Start": " Start",
     " Stopp": " Stop",
     "Abbrechen": "Cancel",
@@ -427,6 +428,7 @@ EN_US = {
 
 
 FR_FR = {
+    "Analyse abgebrochen.": "Analyse annulée.",
     " Start": " Démarrer",
     " Stopp": " Arrêter",
     "Abbrechen": "Annuler",
@@ -991,5 +993,4 @@ FR_FR.update({
     "Schwarze Balken erkannt!\nZuschnitt auf {w}×{h} px (ab {x}, {y}) gesetzt.": "Bandes noires détectées !\nRecadrage défini sur {w}×{h} px (à {x}, {y}).",
     "Keine schwarzen Balken erkannt — das Bild füllt bereits den gesamten Frame.": "Aucune bande noire détectée — la vidéo remplit déjà tout le cadre.",
 })
-
 

@@ -1516,7 +1516,8 @@ class ExportSettingsDialog(QDialog):
 
         actual_input = self.input_file
         if self.settings.get("disc_type") == "bluray" and not str(self.input_file).startswith("bluray:"):
-            actual_input = f"bluray:{self.input_file}"
+            from optical_media import find_bdmv_root
+            actual_input = f"bluray:{find_bdmv_root(self.input_file) or self.input_file}"
 
         args.extend([
             "-ss", f"{seek:.2f}", "-i", actual_input,

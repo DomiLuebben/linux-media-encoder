@@ -1198,7 +1198,8 @@ def get_ffmpeg_args(input_file, output_file, settings):
 
     actual_input = input_file
     if settings.get("disc_type") == "bluray" and not str(input_file).startswith("bluray:"):
-        actual_input = f"bluray:{input_file}"
+        from optical_media import find_bdmv_root
+        actual_input = f"bluray:{find_bdmv_root(input_file) or input_file}"
 
 
     if is_copy_cut:

@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 venv*/
 .venv/
+work/
 
 # Arch-Paketbau
 pkg/

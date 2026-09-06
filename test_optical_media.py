@@ -626,6 +626,8 @@ class DiscRipperDialogAndWorkerTest(unittest.TestCase):
         with patch("optical_media.scan_optical_drives", return_value=[]), \
              patch("optical_media.inspect_source", return_value=mock_dvd):
             dialog = DiscRipperDialog(initial_source="/tmp/fake_dvd")
+            self.assertTrue(dialog._inspection_task["done"].wait(2))
+            dialog._poll_inspection()
             self.assertEqual(dialog.table_titles.rowCount(), 2)
             self.assertTrue(dialog.btn_action.isEnabled())
 
@@ -655,6 +657,8 @@ class DiscRipperDialogAndWorkerTest(unittest.TestCase):
              patch("optical_media.inspect_source", return_value=mock_dvd), \
              patch("disc_ripper_dialog.QMessageBox.information"):
             dialog = DiscRipperDialog(initial_source="/tmp/fake_dvd")
+            self.assertTrue(dialog._inspection_task["done"].wait(2))
+            dialog._poll_inspection()
             dialog.edit_output_dir.setText("/tmp/my_videos")
 
             received_jobs = []

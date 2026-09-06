@@ -480,6 +480,8 @@ class RipAudit20260826Test(unittest.TestCase):
              patch("optical_media.inspect_source", return_value=mock_cd), \
              patch("disc_ripper_dialog.QMessageBox.information"):
             dialog = DiscRipperDialog(initial_source="/dev/sr0")
+            self.assertTrue(dialog._inspection_task["done"].wait(2))
+            dialog._poll_inspection()
             try:
                 dialog.edit_output_dir.setText("/tmp/cd_out")
                 index = dialog.combo_cd_codec.findText("AAC (256 kbps)")
@@ -527,6 +529,8 @@ class RipAudit20260826Test(unittest.TestCase):
              patch("optical_media.inspect_source", return_value=mock_cd), \
              patch.object(DiscRipperDialog, "_start_iso_dump"):
             dialog = DiscRipperDialog(initial_source="/dev/sr0")
+            self.assertTrue(dialog._inspection_task["done"].wait(2))
+            dialog._poll_inspection()
             try:
                 index = dialog.combo_cd_codec.findText("ALAC")
                 self.assertGreaterEqual(index, 0)
@@ -648,6 +652,8 @@ class RipAudit20260826Test(unittest.TestCase):
         with patch("optical_media.scan_optical_drives", return_value=[]), \
              patch("optical_media.inspect_source", return_value=mock_cd):
             dialog = DiscRipperDialog(initial_source="/dev/sr0")
+            self.assertTrue(dialog._inspection_task["done"].wait(2))
+            dialog._poll_inspection()
             try:
                 dialog.radio_mode_direct.setChecked(True)
                 dialog.edit_output_dir.setText("/tmp/cd_out")

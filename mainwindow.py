@@ -2958,7 +2958,8 @@ class MainWindow(QMainWindow):
         )
         settings["_staged_source"] = staged_path
 
-        title_num = int(settings.get("title_num") or 1)
+        title_num = settings.get("title_num")
+        title_num = int(title_num) if title_num is not None else 1
         audio_idx = settings.get("audio_stream_idx")
         sub_idx = settings.get("subtitle_stream_idx")
 
@@ -3118,6 +3119,12 @@ class MainWindow(QMainWindow):
                 k: v for k, v in settings.items()
                 if k not in ("input_args", "disc_type")
             }
+            # Stufe 1 hat einzelne gewählte Spuren bereits herausgefiltert.
+            # In der MKV sind sie jetzt jeweils Spur 0; die Disc-Auswahl bleibt
+            # im Original für erneutes Auslesen unverändert erhalten.
+            for key in ("audio_stream_idx", "subtitle_stream_idx"):
+                if settings.get(key) is not None and settings[key] >= 0:
+                    effective_settings[key] = 0
         elif extracted_wav and os.path.exists(extracted_wav):
             # Audio-CD-Job: aus dem cdparanoia-WAV konvertieren. Die Argumente
             # kommen aus build_audio_encode_args, weil presets keine Metadaten

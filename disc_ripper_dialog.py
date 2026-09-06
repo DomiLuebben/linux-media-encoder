@@ -8,9 +8,10 @@ Ermöglicht das Einlesen, Auswählen von Titeln/Spuren, direktes Remuxen/Rippen,
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any, List, Optional
 
-from PyQt6.QtCore import Qt, QSize, QProcess, QSettings, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QProcess, QSettings, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -67,6 +68,10 @@ class DiscRipperDialog(QDialog):
         self.active_worker: Optional[Any] = None
         self.pending_video_jobs: List[tuple[list[str], str, str]] = []
         self.current_video_job_idx: int = -1
+        self._inspection_task = None
+        self._inspection_timer = QTimer(self)
+        self._inspection_timer.setInterval(50)
+        self._inspection_timer.timeout.connect(self._poll_inspection)
 
         self._init_ui()
         _store = QSettings("LinuxMediaEncoder", "LinuxMediaEncoder")
@@ -90,6 +95,7 @@ class DiscRipperDialog(QDialog):
 
         # --- 1. QUELLENAUSWAHL & LAUFWERKE ---
         source_group = QGroupBox(tr("Optische Quelle / Laufwerk"))
+        self.source_group = source_group
         source_layout = QGridLayout(source_group)
         source_layout.setSpacing(8)
 
@@ -417,22 +423,70 @@ class DiscRipperDialog(QDialog):
             self.edit_output_dir.setText(path)
 
     def _inspect_and_display_source(self, source_path: str):
-        """Untersucht die angegebene Quelle und befüllt die Benutzeroberfläche."""
+        """Start a cancellable scan without blocking the Qt event loop."""
+        if self._inspection_task is not None:
+            self._inspection_task["cancel"].set()
+        source_path = optical_media.find_bdmv_root(source_path) or source_path
         self.current_source = source_path
+        self.inspection_result = None
+        self.table_titles.setRowCount(0)
+        self.row_checkboxes = []
         self.lbl_status.setText(tr("Lese Medium ein..."))
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            self.inspection_result = optical_media.inspect_source(source_path)
-        finally:
-            QApplication.restoreOverrideCursor()
+        self.source_group.setEnabled(False)
+        self.table_titles.setEnabled(False)
+        self.btn_action.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self.btn_stop.setVisible(True)
+        self.prog_bar.setRange(0, 0)
+        task = {"cancel": threading.Event(), "done": threading.Event(), "result": None}
+        self._inspection_task = task
 
+        # The thread owns only plain Python data, never a QWidget. A closed
+        # dialog or a superseded scan cannot receive late UI callbacks.
+        def inspect():
+            try:
+                task["result"] = optical_media.inspect_source(source_path, task["cancel"])
+            except optical_media.InspectionCancelled:
+                pass
+            except Exception as exc:
+                task["result"] = DiscInspectionResult(
+                    source_path=source_path, disc_type=DiscType.UNKNOWN, error=str(exc))
+            finally:
+                task["done"].set()
+
+        threading.Thread(target=inspect, daemon=True).start()
+        self._inspection_timer.start()
+
+    def _poll_inspection(self):
+        task = self._inspection_task
+        if task is None or not task["done"].is_set():
+            return
+        self._inspection_task = None
+        self._inspection_timer.stop()
+        self.source_group.setEnabled(True)
+        self.table_titles.setEnabled(True)
+        self.btn_stop.setVisible(False)
+        self.btn_stop.setEnabled(True)
+        self.prog_bar.setRange(0, 100)
+        self.prog_bar.setValue(0)
+        if task["cancel"].is_set():
+            self.lbl_status.setText(tr("Analyse abgebrochen."))
+            self.lbl_disc_badge.setText(tr("[Kein Medium]"))
+            self.lbl_disc_info.setText(tr("Kein optisches Medium geladen."))
+            return
+        self.inspection_result = task["result"]
+        self._display_inspection_result()
+
+    def _display_inspection_result(self):
         res = self.inspection_result
+        source_path = self.current_source or ""
         if not res or res.error:
             err_msg = res.error if res else tr("Medium konnte nicht gelesen werden.")
             self.lbl_disc_badge.setText(tr("[Fehler]"))
             self.lbl_disc_info.setText(err_msg)
             self.table_titles.setRowCount(0)
             self.btn_action.setEnabled(False)
+            self.lbl_status.setText(tr("Medium konnte nicht gelesen werden."))
             return
 
         # Header Badge & Info
@@ -508,7 +562,8 @@ class DiscRipperDialog(QDialog):
 
         # Zwingend benötigte Komponenten für genau diese Quellart: fehlt eine,
         # wird die Aktion gesperrt statt erst beim Rippen zu scheitern.
-        blocking = optical_media.missing_optical_components(res.disc_type, blocking_only=True)
+        blocking = [c for c in self._optical_components
+                    if not c.available and res.disc_type in c.blocking_for]
         if blocking:
             self.lbl_warn_encryption.setText(tr(
                 "Für diese Quelle fehlt eine zwingend benötigte Komponente: {names}",
@@ -691,6 +746,8 @@ class DiscRipperDialog(QDialog):
     # --- AKTIONEN & VERARBEITUNG ---
 
     def _on_action_clicked(self):
+        if self._inspection_task is not None:
+            return
         if not self.current_source:
             QMessageBox.warning(self, tr("Keine Quelle"), tr("Bitte wähle zuerst eine optische Quelle oder Datei aus."))
             return
@@ -1007,6 +1064,7 @@ class DiscRipperDialog(QDialog):
         genau dann will man wissen, dass z. B. cdparanoia fehlt.
         """
         components = optical_media.check_optical_environment()
+        self._optical_components = components
 
         tooltip_lines = [tr("Systemprüfung optischer Medien")]
         for component in components:
@@ -1264,8 +1322,26 @@ class DiscRipperDialog(QDialog):
             QMessageBox.critical(self, tr("Ripping fehlgeschlagen"), message)
 
     def _on_stop_clicked(self):
+        if self._inspection_task is not None:
+            self._inspection_task["cancel"].set()
+            self.btn_stop.setEnabled(False)
+            return
         if self.active_worker:
             self.active_worker.stop()
+
+    def _cancel_inspection(self):
+        if self._inspection_task is not None:
+            self._inspection_task["cancel"].set()
+            self._inspection_task = None
+        self._inspection_timer.stop()
+
+    def reject(self):
+        self._cancel_inspection()
+        super().reject()
+
+    def closeEvent(self, event):
+        self._cancel_inspection()
+        super().closeEvent(event)
 
     def _set_ui_ripping_state(self, is_ripping: bool):
         self.btn_action.setEnabled(not is_ripping)

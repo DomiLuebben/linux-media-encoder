@@ -14,9 +14,48 @@ import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, List, Optional, Tuple
+
+
+class InspectionCancelled(Exception):
+    """The caller cancelled a disc inspection."""
+
+
+_inspection_context = threading.local()
+
+
+def _run_inspection_command(args, **kwargs):
+    """Like run(), with bounded cancellation while a background scan is active."""
+    cancel = getattr(_inspection_context, "cancel", None)
+    if cancel is None:
+        return subprocess.run(args, **kwargs)
+    if cancel.is_set():
+        raise InspectionCancelled()
+    timeout = kwargs.pop("timeout", None)
+    if kwargs.pop("capture_output", False):
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    with subprocess.Popen(args, **kwargs) as process:
+        try:
+            while True:
+                if cancel.is_set():
+                    raise InspectionCancelled()
+                remaining = deadline - time.monotonic() if deadline is not None else 0.1
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(args, timeout)
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                    return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
 
 
 class DiscType(Enum):
@@ -221,7 +260,7 @@ def _get_udev_properties(device_path: str) -> dict[str, str]:
     """Liest Udev-Eigenschaften für ein Blockgerät."""
     props = {}
     try:
-        res = subprocess.run(
+        res = _run_inspection_command(
             ["udevadm", "info", "-q", "property", "-n", device_path],
             capture_output=True,
             text=True,
@@ -240,7 +279,7 @@ def _get_udev_properties(device_path: str) -> dict[str, str]:
 def eject_drive(device_path: str) -> Tuple[bool, str]:
     """Wirft das optische Laufwerk sicher aus."""
     try:
-        res = subprocess.run(["eject", device_path], capture_output=True, text=True, timeout=10)
+        res = _run_inspection_command(["eject", device_path], capture_output=True, text=True, timeout=10)
         if res.returncode == 0:
             return True, "Laufwerk ausgeworfen."
         return False, res.stderr.strip() or f"Eject fehlgeschlagen (Code {res.returncode})"
@@ -404,7 +443,7 @@ def scan_audio_cd(device_path: str) -> DiscInspectionResult:
     result = DiscInspectionResult(source_path=device_path, disc_type=DiscType.AUDIO_CD)
 
     try:
-        res = subprocess.run(
+        res = _run_inspection_command(
             ["cdparanoia", "-Q", "-d", device_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -423,7 +462,7 @@ def scan_audio_cd(device_path: str) -> DiscInspectionResult:
 
     # Optional CD-TEXT anreichern via cd-info
     try:
-        cd_info_res = subprocess.run(
+        cd_info_res = _run_inspection_command(
             ["cd-info", "--no-cddb", "--no-device-info", device_path],
             capture_output=True,
             text=True,
@@ -567,7 +606,7 @@ def scan_dvd_source(source_path: str) -> DiscInspectionResult:
     Verwendet 'lsdvd -Oy' als Primärweg, mit Fallback auf ffprobe dvdvideo.
     """
     try:
-        res = subprocess.run(
+        res = _run_inspection_command(
             ["lsdvd", "-Oy", source_path],
             capture_output=True,
             text=True,
@@ -601,7 +640,7 @@ def probe_dvd_titles_ffprobe(source_path: str, max_titles: int = 15) -> DiscInsp
             "-i", source_path,
         ]
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            res = _run_inspection_command(cmd, capture_output=True, text=True, timeout=10)
             if res.returncode != 0:
                 if title_num > 1 and len(result.video_titles) > 0:
                     break
@@ -779,7 +818,7 @@ def parse_bdinfo_header(stdout_content: str) -> dict:
 def read_bdinfo_header(source_path: str) -> dict:
     """Ruft 'bd_info' auf und gibt die ausgewerteten Kopfzeilen zurück."""
     try:
-        res = subprocess.run(
+        res = _run_inspection_command(
             ["bd_info", source_path],
             capture_output=True,
             text=True,
@@ -809,7 +848,7 @@ def _probe_bluray_playlist(
     ])
 
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        res = _run_inspection_command(cmd, capture_output=True, text=True, timeout=timeout)
         if res.returncode != 0:
             return None
         data = json.loads(res.stdout)
@@ -910,8 +949,16 @@ def scan_bluray_source(
     )
 
     titles: List[VideoTitleInfo] = []
-    for number in list_bluray_playlists(source_path)[:max_playlists]:
+    playlists = list_bluray_playlists(source_path)
+    for number in playlists[:max_playlists]:
         info = _probe_bluray_playlist(probe_path, number)
+        if info and info.duration_sec > 0:
+            titles.append(info)
+
+    # Die ersten 40 Nummern können ausschließlich Menüs/Extras sein. Bei
+    # begrenzter Analyse zusätzlich libblurays Haupttitel berücksichtigen.
+    if len(playlists) > max_playlists:
+        info = _probe_bluray_playlist(probe_path, None)
         if info and info.duration_sec > 0:
             titles.append(info)
 
@@ -953,7 +1000,21 @@ def scan_bluray_source(
     return result
 
 
-def inspect_source(source_path: str) -> DiscInspectionResult:
+def inspect_source(source_path: str, cancel_event=None) -> DiscInspectionResult:
+    previous = getattr(_inspection_context, "cancel", None)
+    _inspection_context.cancel = cancel_event
+    try:
+        if cancel_event is not None and cancel_event.is_set():
+            raise InspectionCancelled()
+        result = _inspect_source(source_path)
+        if cancel_event is not None and cancel_event.is_set():
+            raise InspectionCancelled()
+        return result
+    finally:
+        _inspection_context.cancel = previous
+
+
+def _inspect_source(source_path: str) -> DiscInspectionResult:
     """
     Haupt-Einstiegspunkt: Untersucht beliebige optische Quelle (Laufwerk, ISO, Ordner)
     und gibt die vollständige Titel-/Track-Struktur zurück.
@@ -1080,7 +1141,7 @@ def build_bluray_rip_args(
     if ignore_errors:
         input_args = ["-err_detect", "ignore_err", "-fflags", "+discardcorrupt+genpts"] + input_args
 
-    probe_url = f"bluray:{source_path}"
+    probe_url = f"bluray:{find_bdmv_root(source_path) or source_path}"
     args = ["-y"] + input_args + ["-i", probe_url]
 
     args += ["-map", "0:v:0"]
@@ -1361,7 +1422,7 @@ def get_optical_media_size(device_path: str) -> int:
     Bezugsgröße die ganze Zeit auf 0 %.
     """
     try:
-        res = subprocess.run(
+        res = _run_inspection_command(
             ["blockdev", "--getsize64", device_path],
             capture_output=True,
             text=True,
@@ -1453,14 +1514,14 @@ def check_ffmpeg_optical_capabilities() -> dict[str, bool]:
     """Prüft die Unterstützung für dvdvideo Demuxer und bluray Protokoll in FFmpeg."""
     caps = {"dvdvideo": False, "bluray": False}
     try:
-        res_demux = subprocess.run(["ffmpeg", "-demuxers"], capture_output=True, text=True, timeout=5)
+        res_demux = _run_inspection_command(["ffmpeg", "-demuxers"], capture_output=True, text=True, timeout=5)
         if "dvdvideo" in res_demux.stdout:
             caps["dvdvideo"] = True
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
         pass
 
     try:
-        res_proto = subprocess.run(["ffmpeg", "-protocols"], capture_output=True, text=True, timeout=5)
+        res_proto = _run_inspection_command(["ffmpeg", "-protocols"], capture_output=True, text=True, timeout=5)
         if "bluray" in res_proto.stdout:
             caps["bluray"] = True
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
