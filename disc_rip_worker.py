@@ -77,7 +77,7 @@ class AudioCdRipWorker(QObject):
         """Bricht den laufenden Ripping-Vorgang ab."""
         self._is_cancelled = True
         self.status_changed.emit("Breche Ripping ab...")
-        if self.process and self.process.state() == QProcess.ProcessState.Running:
+        if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
             self.process.kill()
             self.process.waitForFinished(1000)
         self._cleanup_temp_files()
@@ -151,7 +151,9 @@ class AudioCdRipWorker(QObject):
         self.process.finished.connect(self._handle_step_finished)
         self.process.errorOccurred.connect(self._handle_process_error)
         self.log_received.emit(f"[ffmpeg] Encodiere Track {track.track_num}...")
-        self.process.start(args[0], args[1:])
+        # build_audio_encode_args liefert nur Optionen, anders als der
+        # cdparanoia-Befehlsbauer. args[0] ist '-y', kein Programmname.
+        self.process.start("ffmpeg", args)
 
     def _handle_process_error(self, error: QProcess.ProcessError):
         if self._is_cancelled:
@@ -186,8 +188,9 @@ class AudioCdRipWorker(QObject):
         elif self._current_step == "encode":
             # Codierung fertig -> Atomar verschieben & temporäres WAV löschen
             try:
-                if os.path.exists(self._tmp_out_file):
-                    os.replace(self._tmp_out_file, self._final_out_file)
+                if os.path.getsize(self._tmp_out_file) == 0:
+                    raise OSError("Die erzeugte Audiodatei ist leer.")
+                os.replace(self._tmp_out_file, self._final_out_file)
             except OSError as e:
                 self._cleanup_temp_files()
                 self.finished.emit(False, f"Konnte Zieldatei nicht erstellen: {e}")
@@ -275,7 +278,7 @@ class IsoDumpWorker(QObject):
         """Bricht den ISO-Dump ab."""
         self._is_cancelled = True
         self.status_changed.emit("Breche ISO-Dump ab...")
-        if self.process and self.process.state() == QProcess.ProcessState.Running:
+        if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
             self.process.kill()
             self.process.waitForFinished(1000)
         if os.path.exists(self._tmp_iso_path):

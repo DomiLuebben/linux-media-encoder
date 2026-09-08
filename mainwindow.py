@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         self.current_job_idx = -1 # Index des aktuell laufenden Jobs
         self.active_worker = None # Aktive FFmpegWorker-Instanz
         self.is_running = False   # Warteschlangen-Status
+        self._queue_generation = 0  # Ungültige Folgeschritte nach Stop/Neustart verwerfen
         self._image_preview_pixmap = QPixmap()
         self._image_preview_rotation = 0  # Drehwinkel (0/90/180/270) des angezeigten Jobs
         self._single_job_idx = None   # Kontextmenü "nur diesen Job starten"
@@ -2408,6 +2409,7 @@ class MainWindow(QMainWindow):
             return
 
         self._single_job_idx = row
+        self._queue_generation += 1
         self._run_total = 1
         self._run_done = 0
         self.is_running = True
@@ -2454,7 +2456,7 @@ class MainWindow(QMainWindow):
         for idx, j in enumerate(self.jobs):
             if j["status"] != "Bereit":
                 continue
-            key = os.path.normcase(os.path.normpath(os.path.abspath(j["output_file"])))
+            key = os.path.normcase(os.path.realpath(j["output_file"]))
             if key in seen_outputs:
                 j["status"] = "Fehlgeschlagen"
                 self._update_table_row(idx)
@@ -2470,6 +2472,7 @@ class MainWindow(QMainWindow):
             return
 
         self._single_job_idx = None
+        self._queue_generation += 1
         self._run_total = len(ready_rows)
         self._run_done = 0
         self.is_running = True
@@ -2518,21 +2521,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
-        # WICHTIG: Queue-Flag VOR dem Beenden der Hilfsprozesse löschen. Deren
-        # Kill feuert synchron 'finished'; die Handler würden bei is_running=True
-        # noch einen neuen (dann verwaisten) FFmpeg-Encode starten.
-        self.is_running = False
-
-        # Untertitel-Hilfsprozesse beenden
-        for attr in ("sub_process", "sub_ai_process"):
-            proc = getattr(self, attr, None)
-            if proc and proc.state() != QProcess.ProcessState.NotRunning:
-                proc.kill()
-                proc.waitForFinished(1000)
-
-        # Laufenden FFmpeg-Worker stoppen (killt QProcess + wartet kurz)
-        if self.active_worker:
-            self.active_worker.stop()
+        self._cancel_active_job()
 
         self._save_session_state()
         super().closeEvent(event)
@@ -2724,22 +2713,57 @@ class MainWindow(QMainWindow):
         if not self.is_running:
             return
             
-        self.is_running = False
         self.console.append("[LME WARTSCHLANGE] Verarbeitung wird gestoppt...")
-        
-        # Falls Untertitel-Extraktion/Transkription läuft, diese beenden
-        if hasattr(self, "sub_process") and self.sub_process and self.sub_process.state() == QProcess.ProcessState.Running:
-            self.sub_process.kill()
-        if hasattr(self, "sub_ai_process") and self.sub_ai_process and self.sub_ai_process.state() == QProcess.ProcessState.Running:
-            self.sub_ai_process.kill()
-        # Audio-CD-Auslesen (cdparanoia) ebenfalls abbrechen
-        if hasattr(self, "cd_extract_process") and self.cd_extract_process and self.cd_extract_process.state() == QProcess.ProcessState.Running:
-            self.cd_extract_process.kill()
-            
+        self._cancel_active_job()
+
+    def _cancel_active_job(self):
+        """Gemeinsamer Abschluss für Stop und Schließen, in jeder Arbeitsphase."""
+        self.is_running = False
+        self._queue_generation += 1
+        # Hilfsprozesse dürfen nach dem Stop keinen anderen Job mehr verändern.
+        # Auch Starting ist aktiv: direkt nach start() kommt Running erst später.
+        for attr in ("sub_process", "sub_ai_process", "cd_extract_process"):
+            proc = getattr(self, attr, None)
+            if proc is None:
+                continue
+            for signal in (proc.finished, proc.errorOccurred):
+                try:
+                    signal.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
+            if proc.state() != QProcess.ProcessState.NotRunning:
+                proc.kill()
+                proc.waitForFinished(3000)
+
         if self.active_worker:
             self.active_worker.stop()
-        else:
+        self.active_worker = None
+
+        if 0 <= self.current_job_idx < len(self.jobs):
+            job = self.jobs[self.current_job_idx]
+            self._cleanup_staged_source(job)
+            self._cleanup_subtitle_temp_audio(job)
+            self._cleanup_owned_subtitle(job)
+            if self._job_is_busy(job):
+                job["status"] = "Abgebrochen"
+                job["speed"] = "0.0x"
+                job["time_remaining"] = "--"
+                job.pop("_phase", None)
+                self._update_table_row(self.current_job_idx)
+        self._update_ui_state()
+
+    def _defer_queue_step(self, callback):
+        """Nur der Lauf, der einen Folgeschritt eingeplant hat, darf ihn ausführen."""
+        if not self.is_running:
             self._update_ui_state()
+            return
+        generation = getattr(self, "_queue_generation", 0)
+
+        def run_if_current():
+            if self.is_running and generation == getattr(self, "_queue_generation", 0):
+                callback()
+
+        QTimer.singleShot(0, run_if_current)
 
     # --- CORE WORKER EXECUTION ---
     def _process_next_job(self):
@@ -2910,7 +2934,7 @@ class MainWindow(QMainWindow):
         job["progress"] = 0.0
         self._update_table_row(self.current_job_idx)
         # Entkoppelt weiterreichen, damit der beendete Prozess sauber abgebaut wird.
-        QTimer.singleShot(0, lambda: self._start_current_ffmpeg_job(job))
+        self._defer_queue_step(lambda: self._start_current_ffmpeg_job(job))
 
     def _run_disc_rip_stage(self, job):
         """Stufe 1: Titel verlustfrei von der Disc in eine Zwischendatei lesen."""
@@ -2944,7 +2968,7 @@ class MainWindow(QMainWindow):
             )
             settings.pop("_staged_source", None)
             settings["two_stage"] = False
-            self._start_current_ffmpeg_job(job)
+            self._start_prepared_disc_job(job)
             return
 
         try:
@@ -3022,7 +3046,7 @@ class MainWindow(QMainWindow):
         job["progress"] = 0.0
         self._update_table_row(self.current_job_idx)
         # Entkoppelt weiterreichen, damit der beendete Worker sauber abgebaut wird.
-        QTimer.singleShot(0, lambda: self._start_prepared_disc_job(job))
+        self._defer_queue_step(lambda: self._start_prepared_disc_job(job))
 
     def _start_prepared_disc_job(self, job):
         if (not self.is_running or self.current_job_idx < 0
@@ -3056,7 +3080,7 @@ class MainWindow(QMainWindow):
         self._run_done += 1
         self._update_table_row(self.current_job_idx)
         self.console.append(f"\n[LME FEHLER] {message}")
-        QTimer.singleShot(0, self._process_next_job)
+        self._defer_queue_step(self._process_next_job)
 
     def _configured_staging_dir(self):
         """Vom Anwender eingestellter Zwischenspeicher (leer = automatisch)."""
@@ -3079,7 +3103,8 @@ class MainWindow(QMainWindow):
 
     def _start_current_ffmpeg_job(self, job):
         """Startet FFmpeg fuer den bereits ausgewaehlten Queue-Job."""
-        if self.current_job_idx == -1 or not self.is_running:
+        if (not self.is_running or not 0 <= self.current_job_idx < len(self.jobs)
+                or self.jobs[self.current_job_idx] is not job):
             return
 
         # Schutz: Ausgabe darf keine Quelldatei sein – weder die eigene noch
@@ -3117,7 +3142,9 @@ class MainWindow(QMainWindow):
             )
             # Entkoppelt weitermachen — direkte Rekursion würde bei vielen
             # übersprungenen Jobs den Call-Stack aufblähen.
-            QTimer.singleShot(0, self._process_next_job)
+            self._cleanup_staged_source(job)
+            self._cleanup_owned_subtitle(job)
+            self._defer_queue_step(self._process_next_job)
             return
 
         # Liegt eine Zwischendatei vor (Stufe 1 eines Disc-Jobs), wird ab hier
@@ -3142,19 +3169,20 @@ class MainWindow(QMainWindow):
                 if settings.get(key) is not None and settings[key] >= 0:
                     effective_settings[key] = 0
         elif extracted_wav and os.path.exists(extracted_wav):
-            # Audio-CD-Job: aus dem cdparanoia-WAV konvertieren. Die Argumente
-            # kommen aus build_audio_encode_args, weil presets keine Metadaten
-            # (Titel/Interpret/Album/Tracknummer) setzen kann.
+            # Aus dem CDDA-WAV mit denselben Einstellungen wie eine normale
+            # Datei konvertieren: Preset-Codecs und Schnittmarken gelten auch hier.
             import optical_media
             job["_phase"] = "encode"
             effective_input = extracted_wav
-            effective_settings = None
-            audio_encode_args = optical_media.build_audio_encode_args(
-                tmp_wav_input=extracted_wav,
-                output_file=job["output_file"],
-                codec=str(settings.get("audio_codec") or "flac"),
-                bitrate=str(settings.get("audio_bitrate") or ""),
-                track_info=optical_media.AudioTrackInfo(
+            effective_settings = {
+                k: v for k, v in settings.items()
+                if k not in ("input_args", "disc_type")
+            }
+            audio_encode_args = presets.get_ffmpeg_args(
+                extracted_wav, job["output_file"], effective_settings,
+            )
+            audio_encode_args[-1:-1] = optical_media.audio_track_metadata_args(
+                optical_media.AudioTrackInfo(
                     track_num=int(settings.get("track_num") or 0),
                     duration_sec=float(settings.get("source_duration") or 0.0),
                     title=str(settings.get("track_title") or ""),
@@ -3322,9 +3350,22 @@ class MainWindow(QMainWindow):
                 pass
         job["settings"].pop("temp_audio_path", None)
 
+    def _cleanup_owned_subtitle(self, job):
+        # Eigentum durch Erzeugung, niemals anhand eines Dateinamen-Musters.
+        # Das Feld liegt am Laufzeit-Job und wird weder gespeichert noch kopiert.
+        path = job.pop("_owned_temp_srt", None)
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            if job["settings"].get("temp_srt_path") == path:
+                job["settings"].pop("temp_srt_path", None)
+
     def _continue_without_generated_subtitles(self, job, reason):
         if reason:
             self.console.append(f"[LME WARNING] {reason}\nFahre ohne automatisch erzeugte Untertitel fort.")
+        self._cleanup_owned_subtitle(job)
         job["settings"].pop("temp_srt_path", None)
         job["settings"].pop("_subtitle_ai_stage", None)
         job["settings"].pop("_subtitle_source_srt", None)
@@ -3430,10 +3471,10 @@ class MainWindow(QMainWindow):
             job["settings"]["temp_srt_path"] = srt_path
             job["settings"]["subtitles_file_path"] = srt_path
         else:
-            # mkstemp statt vorhersagbarem Namen; der Prefix "lme_temp_sub_"
-            # steuert weiterhin das Aufräumen in _on_worker_finished.
+            # Nur diese selbst angelegte Datei wird nach dem Encode entfernt.
             fd, srt_path = tempfile.mkstemp(prefix="lme_temp_sub_", suffix=".srt")
             os.close(fd)
+            job["_owned_temp_srt"] = srt_path
             job["settings"]["temp_srt_path"] = srt_path
             
         try:
@@ -3546,20 +3587,14 @@ class MainWindow(QMainWindow):
                     job.pop("_log_tail", None)
                 self.console.append(f"[LME WARNING] Job beendet: {message}\n")
                 
-            # Temp SRT Datei aufräumen falls vorhanden
-            temp_srt = job["settings"].get("temp_srt_path")
-            if temp_srt and "lme_temp_sub_" in os.path.basename(temp_srt) and os.path.exists(temp_srt):
-                try:
-                    os.remove(temp_srt)
-                except OSError:
-                    pass
+            self._cleanup_owned_subtitle(job)
                 
             self._update_table_row(self.current_job_idx)
             
         self.active_worker = None
         # Entkoppelt statt direkt: verhindert Rekursion über die ganze Queue,
         # wenn Jobs synchron scheitern (z. B. ffmpeg nicht installiert).
-        QTimer.singleShot(0, self._process_next_job)
+        self._defer_queue_step(self._process_next_job)
 
     def _update_ui_state(self):
         """Aktiviert/Deaktiviert Toolbar-Buttons basierend auf Warteschlangen-Aktivität."""

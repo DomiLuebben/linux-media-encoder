@@ -707,6 +707,7 @@ class RipAudit20260826Test(unittest.TestCase):
         win.is_running = True
         win.console = type("C", (), {"append": lambda self, text: None})()
         win._run_done = 0
+        win._queue_generation = 0
         win._update_table_row = lambda idx: None
         win._process_next_job = lambda: None
         win.tr = lambda text, **kw: text
@@ -824,4 +825,3 @@ class RipAudit20260826Test(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

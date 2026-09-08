@@ -1329,17 +1329,19 @@ def build_audio_encode_args(
     else:
         args += ["-c:a", "flac"]
 
-    if track_info:
-        if track_info.title:
-            args += ["-metadata", f"title={track_info.title}"]
-        if track_info.artist:
-            args += ["-metadata", f"artist={track_info.artist}"]
-        if track_info.album:
-            args += ["-metadata", f"album={track_info.album}"]
-        if track_info.track_num:
-            args += ["-metadata", f"track={track_info.track_num}"]
-
+    args += audio_track_metadata_args(track_info)
     args.append(output_file)
+    return args
+
+
+def audio_track_metadata_args(track_info: Optional[AudioTrackInfo]) -> List[str]:
+    """Gemeinsame Track-Tags für Direkt-Rip und die editierbare Warteschlange."""
+    args = []
+    if track_info:
+        for key, value in (("title", track_info.title), ("artist", track_info.artist),
+                           ("album", track_info.album), ("track", track_info.track_num)):
+            if value:
+                args += ["-metadata", f"{key}={value}"]
     return args
 
 
