@@ -1,7 +1,7 @@
 # Maintainer: Dominik Lübben <dominikluebben@googlemail.com>
 pkgname=linux-media-encoder
 # Version auch in version.py pflegen (Single Source für die App selbst)
-pkgver=1.12.3
+pkgver=1.12.4
 pkgrel=1
 pkgdesc="FFmpeg media encoder GUI inspired by Adobe Media Encoder (PyQt6)"
 arch=('any')
@@ -42,7 +42,7 @@ sha256sums=('c160ac9dc88b5cedd793a942d8551f22dfbc39b47ab4aa5fc13af708c3453dd8'
             'a543890384378bdd789797e090083859e7ab43d61b71e041f30d0306005fea4f'
             'f44c9822c4e11dfe7d02ee2e165d7955fa0a62caff0944372575e071a77bb8f2'
             '7f58dfcc1a87e964dc7628b72d03716d4763fcb13a0163f4a9ae6435e3f265b6'
-            '51273a179a31829ac419e8df9103d05b42677a508865a564afc83048ad7d5d1b'
+            'b70bf2d2e25822b208039ef8cffbdc23e7b629ec263b4b95648485c39fe9448f'
             '906d96391e5a6f5734dd3f5b946810e3d14cb551663bc75280a897a2825797c4'
             'da4132ad7c0ee19eae88d923dac1a33ba57cb992179902e39889a7f1ea590797'
             '14197e6f9585ec6c4d80bfa6a156e691e60bb5265cb306d8ea4f6b7d828a51e1'
@@ -53,7 +53,7 @@ sha256sums=('c160ac9dc88b5cedd793a942d8551f22dfbc39b47ab4aa5fc13af708c3453dd8'
             'd3cf7a7dafe8c5593fa396c93fa216d46252272d45a356f4d66598d8b8c58a9c'
             'b17f106ebd4cff3fc0c83fb03eb1ab475f4eff0ea514e5421780e7ee6213961c'
             '390273b23c29b01687683ca1bb8ac4c9e45d009e47e9092a85f17c068b59614c'
-            '443580065e771da464c907b83f8072fbc064616b1802c3e08b77a6f3ece4c2a4'
+            '1aa8d37bc14fd256028d7968125ee59bf5e8d19c61eb0f6bfee55c13b905f607'
             '24b6c858e70ed5678712b9deb5761b32a152016d4cf35e9bc2bb73bcf5dd09c3'
             '79fcb30bee3903bf1dffef7a8e84c9cd775fe2aa369e279f9cd2eb876c69f8b0'
             '1a0e84aa52709fee60ab7968746424456f595614325461214af36bab70574724'

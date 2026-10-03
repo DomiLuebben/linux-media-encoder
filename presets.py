@@ -419,8 +419,9 @@ _VIDEO_FORMAT_DEFAULTS = {
         "width": 1920, "height": 1080, "fps": "25", "profile": "High",
     },
     "HEVC / H.265 (MP4)": {
-        "container": "mp4", "video_codec": "libx265", "video_bitrate": "",
-        "crf": "23", "audio_codec": "aac", "audio_bitrate": "192k",
+        "container": "mp4", "video_codec": "libx265", "video_bitrate": "8M",
+        "crf": "", "encoding_mode": "vbr",
+        "audio_codec": "aac", "audio_bitrate": "192k",
         "width": 1920, "height": 1080, "fps": "25", "profile": "Main",
     },
     "VP9 (WebM)": {
@@ -450,12 +451,12 @@ _VIDEO_FORMAT_DEFAULTS = {
     },
     "HEVC (MP4, GPU/NVENC)": {
         "container": "mp4", "video_codec": "hevc_nvenc", "video_bitrate": "8M",
-        "crf": "", "audio_codec": "aac", "audio_bitrate": "192k",
+        "crf": "", "encoding_mode": "vbr", "audio_codec": "aac", "audio_bitrate": "192k",
         "width": 1920, "height": 1080, "fps": "25", "profile": "Main",
     },
     "AV1 (MP4, GPU/NVENC)": {
         "container": "mp4", "video_codec": "av1_nvenc", "video_bitrate": "8M",
-        "crf": "", "audio_codec": "aac", "audio_bitrate": "192k",
+        "crf": "", "encoding_mode": "vbr", "audio_codec": "aac", "audio_bitrate": "192k",
         "width": 1920, "height": 1080, "fps": "25", "profile": "",
     },
     "MP3 (Nur Audio)": {
