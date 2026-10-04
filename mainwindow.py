@@ -8,7 +8,10 @@ mit bidirektional synchronisierten Bitraten-Schiebereglern.
 import json
 import os
 import uuid
-from PyQt6.QtCore import Qt, QSize, QSettings, QProcess, QTimer, QUrl, pyqtSlot
+from PyQt6.QtCore import (
+    Qt, QSize, QSettings, QProcess, QTimer, QUrl, pyqtSlot,
+    QObject, QThread, pyqtSignal,
+)
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox, QLineEdit,
@@ -31,6 +34,13 @@ import subtitle_utils
 from crop_label import CropImageLabel
 from ffmpeg_worker import FFmpegWorker
 from version import __version__
+
+# Laufende Benachrichtigungs-Threads: QThread -> (thread, worker).
+# Haelt beide am Leben, bis der Thread sich selbst beendet hat. Ohne dieses
+# Register wuerde Python den Thread beim naechsten GC einsammeln, waehrend
+# Qt noch darin laeuft — und das Fenster nennt einen laufenden, nicht
+# beendeten QThread beim Abbau einen Fehler.
+_notify_threads = {}
 
 
 class MainWindow(QMainWindow):
@@ -2616,31 +2626,48 @@ class MainWindow(QMainWindow):
     def _notify(self, title, body, folder=None):
         """Desktop-Benachrichtigung (DBus, Fallback notify-send, sonst still).
         Mit folder bekommt die Benachrichtigung einen "Ordner öffnen"-Button
-        (nur über DBus möglich; der notify-send-Fallback bleibt ohne Aktion)."""
+        (nur über DBus möglich; der notify-send-Fallback bleibt ohne Aktion).
+
+        Der Aufrufer kehrt SOFORT zurück — die gesamte D-Bus-Arbeit laeuft in
+        einem Daemon-Thread. Anlass ist ein gemessener Freeze: die Oberflaeche
+        stand still, sobald alle Jobs durch waren, also genau dann, wenn
+        _notify() am Queue-Ende aufgerufen wird. Zwei blockierende Stellen,
+        beide einzeln nachgewiesen:
+        1. iface.call() wartet synchron auf den Notification-Daemon.
+           Gemessen: exakt dessen Antwortzeit (haengender Daemon = 6 s Stillstand).
+        2. Schon QDBusInterface(...) mit anschliessendem isValid() loest eine
+           synchrone runde Introspektion aus — bei haengendem Daemon ebenfalls
+           6 s. Ein blosses Umstellen auf callAsync() behebt daher nur (1).
+        Qt-Zugriffe aus dem Thread sind unzulaessig, deshalb holt der Thread
+        nur die Antwort; das Eintragen der Aktions-ID und der notify-send-
+        Rueckfall laufen ueber Signale zurueck im GUI-Thread.
+        """
+        want_actions = bool(folder) and self._connect_notification_actions()
+        actions = ["open-folder", tr("Ordner öffnen")] if want_actions else []
+
+        on_ok = (lambda nid: self._on_notify_ok(nid, folder)) if want_actions else None
+
+        # WICHTIG — Signatur: finished_failed hat NULL Parameter. Ein Slot
+        # mit (title, body) laesst sich damit nicht verbinden; Qt bricht
+        # dabei mit einem Fatal ab ("QObject::event"), gemessen beim
+        # Queue-Ende. Deshalb holt der Rueckfall-Slot seine Daten aus dem
+        # Worker, der sie als Felder haelt.
+        def _fallback():
+            self._notify_via_notify_send(title, body)
+
         try:
-            from PyQt6.QtDBus import QDBusInterface
-            iface = QDBusInterface(
-                "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
-                "org.freedesktop.Notifications",
-            )
-            if iface.isValid():
-                actions = []
-                if folder and self._connect_notification_actions():
-                    actions = ["open-folder", tr("Ordner öffnen")]
-                reply = iface.call(
-                    "Notify", "Linux Media Encoder", 0, "linux-media-encoder",
-                    title, body, actions, {}, 8000,
-                )
-                if reply.errorName() == "":
-                    if actions:
-                        try:
-                            notify_id = int(reply.arguments()[0])
-                            self._notify_folder_by_id[notify_id] = folder
-                        except (IndexError, TypeError, ValueError):
-                            pass
-                    return
+            _run_notify_async(title, body, actions, on_ok, _fallback)
         except Exception:
-            pass
+            self._notify_via_notify_send(title, body)
+
+    def _on_notify_ok(self, notify_id, folder):
+        """Erfolgreiche Benachrichtigung: Ordner-Aktion hinter der ID ablegen."""
+        if notify_id is None:
+            return
+        self._notify_folder_by_id[notify_id] = folder
+
+    def _notify_via_notify_send(self, title, body):
+        """Rueckfallweg ohne Aktion (notify-send kann keine anbieten)."""
         QProcess.startDetached("notify-send", ["-a", "Linux Media Encoder", title, body])
 
     def _connect_notification_actions(self):
@@ -3713,3 +3740,107 @@ class MainWindow(QMainWindow):
                 version=__version__,
             )
         )
+
+
+class _NotifyWorker(QObject):
+    """Schickt eine Desktop-Benachrichtigung, ohne den GUI-Thread zu blockieren.
+
+    Anlass ist der gemessene Freeze am Queue-Ende: die Oberflaeche blieb
+    stehen, sobald alle Jobs verarbeitet waren. Verursacher war der
+    synchrone D-Bus-Weg in _notify() — sowohl der Aufruf selbst als auch
+    schon die Konstruktion von QDBusInterface mit isValid().
+
+    Ein echtes QObject in einem eigenen QThread, nicht ein QRunnable:
+    PyQt-Signale sind auf QRunnable nicht erlaubt (QRunnable ist kein
+    QObject — "cannot be converted to PyQt6.QtCore.QObject"), und nur ein
+    QObject kann per moveToThread in einen eigenen Thread wandern. Damit
+    sind die Signale zusaetzlich echte QueuedConnection-Deliveries.
+
+    Der Thread fasst ausschliesslich D-Bus an, nie Widgets. Die Rueckmeldung
+    laeuft ueber finished_ok / finished_failed zurueck in den GUI-Thread.
+    """
+
+    # notify_id bei Erfolg (None, wenn keine Aktion angeboten wurde),
+    # ansonsten finished_failed fuer den notify-send-Rueckfall.
+    finished_ok = pyqtSignal(object)
+    finished_failed = pyqtSignal()
+
+    def __init__(self, title, body, actions):
+        super().__init__()
+        self.title = title
+        self.body = body
+        self.actions = list(actions)
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            from PyQt6.QtDBus import QDBusInterface
+
+            iface = QDBusInterface(
+                "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications",
+            )
+            if not iface.isValid():
+                self.finished_failed.emit()
+                return
+
+            reply = iface.call(
+                "Notify", "Linux Media Encoder", 0, "linux-media-encoder",
+                self.title, self.body, self.actions, {}, 8000,
+            )
+            if reply.errorName() != "":
+                self.finished_failed.emit()
+                return
+
+            notify_id = None
+            if self.actions:
+                try:
+                    notify_id = int(reply.arguments()[0])
+                except (IndexError, TypeError, ValueError):
+                    notify_id = None
+            self.finished_ok.emit(notify_id)
+        except Exception:
+            # Kein DBus-Modul, kein Session-Bus, unerwartete Antwortform:
+            # der Aufrufer kennt den notify-send-Rueckfall.
+            self.finished_failed.emit()
+
+
+def _run_notify_async(title, body, actions, on_ok, on_failed):
+    """Startet _NotifyWorker in einem eigenen Thread und raeumt danach auf.
+
+    Aufrufer bekommt sofort die Kontrolle zurueck.
+
+    Lebenszyklus (der ist nicht selbstlaeufig, deshalb ausdruecklich notiert):
+    started -> worker.run -> Signal zurueck -> quit -> finished.
+    Ohne das quit() bleibt der QThread nach run() im Ereignis-Loop stehen
+    und wuerde beim Fensterabbau als "QThread: Destroyed while thread is
+    still running" mit einem Abbruch enden. Das pop() aus dem Register
+    passiert deshalb erst in finished, also nachdem quit() durch ist.
+    """
+    thread = QThread()
+    worker = _NotifyWorker(title, body, actions)
+    worker.moveToThread(thread)
+
+    thread.started.connect(worker.run)
+
+    if on_ok is not None:
+        worker.finished_ok.connect(on_ok, Qt.ConnectionType.QueuedConnection)
+    if on_failed is not None:
+        worker.finished_failed.connect(on_failed, Qt.ConnectionType.QueuedConnection)
+
+    # Jeder Ausgang aus run() beendet den Thread. run() kann auch ohne
+    # Signal zurueckkommen (z. B. unerwartete Ausnahme), deshalb haengt
+    # quit() zusaetzlich an finished_ok/failed, nicht an eine Fehlerstelle.
+    worker.finished_ok.connect(thread.quit, Qt.ConnectionType.DirectConnection)
+    worker.finished_failed.connect(thread.quit, Qt.ConnectionType.DirectConnection)
+
+    # Der Worker wird erst nach dem Thread-Ende geloescht — deleteLater()
+    # waehrend run() noch aktiv wuerde das Objekt im laufenden Thread
+    # zerstoeren.
+    thread.finished.connect(worker.deleteLater)
+
+    # Register haelt beide bis zum Ende fest; das pop() gibt sie danach frei.
+    _notify_threads[thread] = (thread, worker)
+    thread.finished.connect(lambda: _notify_threads.pop(thread, None))
+    thread.start()
+    return thread

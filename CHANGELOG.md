@@ -1,5 +1,76 @@
 # Changelog — Linux Media Encoder
 
+## [1.12.5] — 2026-10-04
+
+### Behoben
+- **Die Oberfläche fror ein, sobald alle Jobs abgearbeitet waren**
+  (Dominik: „der einfriert sobald die Jobs abgearbeitet sind")
+  - **Ursache, am laufenden Verhalten gemessen statt im Code vermutet:**
+    Genau an dieser Stelle — dem Ende der Warteschlangen-Verarbeitung —
+    wird die Abschluss-Benachrichtigung verschickt. Deren D-Bus-Weg war
+    **blockierend**: Die Oberfläche stand still, bis der Notification-Daemon
+    antwortete. Gemessen mit einem Heartbeat-Timer am echten Code: **exakt
+    dessen Antwortzeit** — ein hängender Daemon ergab 6 s Stillstand pro
+    Queue-Durchlauf, im Extremfall bis zum D-Bus-Timeout.
+  - **Es waren zwei blockierende Stellen, nicht eine.** Ein bloßes Umstellen
+    des Aufrufs auf einen asynchronen (`asyncCall`) hätte nur die zweite
+    behoben: **schon die Konstruktion** von `QDBusInterface` mit anschließendem
+    `isValid()` löst eine synchrone, runde Introspektion aus und blockiert
+    genauso (nachgewiesen: 6011 ms). Beide standen im gemessenen Weg.
+  - **Behoben:** Die gesamte D-Bus-Arbeit läuft jetzt in einem eigenen
+    Thread (`_NotifyWorker` + `_run_notify_async`). Der Aufrufer kehrt sofort
+    zurück. Nach der Behebung gemessen: **51–56 ms** statt 6000 ms, in allen
+    vier Fällen (langsamer Daemon, kein Daemon, fehlendes QtDBus-Modul,
+    realer Aufruf).
+  - **Zweiter Fehler, dabei gefunden und behoben:** `finished_failed` hat
+    **null** Parameter, der Rückfall-Slot wurde aber direkt an
+    `_notify_via_notify_send(title, body)` gehängt — Qt kann eine solche
+    Verbindung nicht herstellen und **beendet den Prozess mit einem Fatal**.
+    Jetzt verbindet ein parameterloser `_fallback()`, der seine Daten aus dem
+    umschliessenden Scope holt.
+
+### Prüfstand
+- **Neuer Test `test_queue_freeze.py` (5 Prüfungen)**, mit **beidseitigem
+  Mutationsnachweis** — ein Wächter, der nicht anschlägt, bewacht nichts:
+  - **Mutation A** (ursprünglicher blockierender Aufruf wiederhergestellt):
+    Test schlägt an, meldet **5001 ms**.
+  - **Mutation B** (2-Parameter-Slot an ein 0-Parameter-Signal):
+    Test reproduziert den **Prozessabbruch (Exit 134)**.
+  - Ohne beide Fehler: **5/5 grün in 5,3 s**.
+  - Erfasst werden außerdem: das Ende des Benachrichtigungs-Threads (sonst
+    Fensterabbau mit Fehler) und dass der Rückfall die **richtigen Daten**
+    weiterreicht.
+- **`bash scripts/verify-all.sh`: 299 Tests grün**, dazu jeder der 17
+  Testmodule einzeln im eigenen Prozess, `py_compile` und `manual_ui_check.py`.
+  Laufzeit 81 s, Exit 0.
+- **Wegwerf-Messungen** (`/tmp/opencode/`): Event-Loop-Lücken am Queue-Ende
+  über einen 50-ms-Heartbeat, isolierte Thread-Tests, Fensterabbau während
+  laufender Benachrichtigung.
+
+### Selbstverschulden, offen dokumentiert
+- **Der erste Wächter war blind.** Er maß die Blockade über einen
+  Heartbeat-Timer und meldete „grün", obwohl der echte Fehler aktiv war:
+  das Messbudget endete, bevor die blockierende Aktion abgeschlossen war,
+  und die Lücke daher nie erfasst wurde. Drei Mutationsproben blieben
+  zunächst ebenfalls grün. Erst die **direkte Messung der Aufrufzeit**
+  (`_measure_call_time`) hat den Fehler sichtbar gemacht. Genau die
+  Merkregel aus den V2-Audits: eine Pruefung, die ins Leere laufen kann,
+  gilt als nicht geliefert.
+- **Zwei Testfehler haben den Prozess abbrechen lassen** und waren keine
+  Programmfehler: eine D-Bus-Attrappe, die ein `QObject` nachbildet (Qt
+  zerstört solche beim Thread-Ende), und ein Wegwerfskript, das globale
+  Attrappen über `close()` hinweg bestehen ließ. Beide Attrappen sind jetzt
+  bewusst **keine** `QObject`-Erben.
+
+### Nicht geprüft
+- **Kein Hörtest am echten Desktop.** Der Freeze ist am Code gemessen, über
+  die Event-Schleife — das ist der Oberflächen-Stillstand, den Dominik
+  beschrieben hat, aber nicht am Bildschirm selbst gesehen.
+- **Nicht auf anderen Distributionen** (nur Arch/CachyOS auf diesem Rechner).
+- Ein 6-Sekunden-Hänger, der von einem hängenden Notification-Daemon
+  **verursacht** wird, ist damit umgangen (kein Warten mehr). Der
+  Notification-Daemon selbst wird dabei nicht behandelt.
+
 ## [1.12.4] — 2026-09-28
 
 ### Behoben

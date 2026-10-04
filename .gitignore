@@ -14,3 +14,4 @@ src/
 *_lme.*
 test_output.*
 temp_test_audio.wav
+*.sha256
