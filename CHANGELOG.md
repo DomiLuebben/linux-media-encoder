@@ -1,5 +1,23 @@
 # Changelog — Linux Media Encoder
 
+## [1.12.7] — 2026-10-15
+
+### Hinzugefügt
+- **Renderliste: Mehrfachauswahl und Entf-Taste (`mainwindow.py`)**:
+  - Markierte Jobs lassen sich mit **Entf** (oder Rücktaste) gemeinsam entfernen; Strg+A, Umschalt-Bereich und Strg-Einzelauswahl funktionieren wie erwartet.
+  - Während die Warteschlange läuft, ignoriert die Taste das Löschen (wie die gesperrte Toolbar-Aktion) und sagt es in der Statusleiste.
+  - Nach dem Löschen rückt die Markierung auf die nachfolgende Zeile, sodass wiederholtes Entf weiterläuft.
+
+### Behoben
+- **Umschalt-/Strg-Klick auf Format, Vorgabe oder Ausgabedatei öffnete den Export-Dialog** statt die Auswahl zu erweitern. Mit Umschalt oder Strg wird nur noch markiert, der einfache Klick öffnet weiter den Dialog.
+- **Rechtsklick in eine Mehrfachauswahl löste sie auf**; „Entfernen“ traf nur eine Zeile. Das Kontextmenü behält die Auswahl, zeigt „n Jobs entfernen“ und sperrt Einzeljob-Aktionen bei Mehrfachauswahl.
+- **Mehrfaches Löschen lud die Einstellungen jeder Nachbarzeile neu** (n-fach samt Bildvorschau); jetzt einmal am Ende.
+- **FFmpeg-Statuszeilen sammelten sich zu einer Riesenzeile (`ffmpeg_worker.py`)**: `-nostats` unterdrückt sie (der Fortschritt kommt über `-progress`), stderr wird zusätzlich an `\r` getrennt, und ein letzter Rest ohne Zeilenumbruch landet beim Prozessende im Log und damit in den Fehlerdetails.
+- **Untertitel-Pipeline (`mainwindow.py`)**: Audio-Extraktion und KI-Aufruf prüfen jetzt auch auf `CrashExit`, wie es im Untertitel-Editor schon seit 1.12.6 der Fall ist.
+
+### Prüfstand
+- Neu: `test_queue_multiselect.py` (8 Prüfungen) und `test_ffmpeg_worker.py` (7 Prüfungen, darunter die bislang ungeprüfte `-progress`-Platzierung aus 1.12.6).
+
 ## [1.12.6] — 2026-10-15
 
 ### Behoben & Verbessert

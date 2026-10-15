@@ -43,6 +43,23 @@ from version import __version__
 _notify_threads = {}
 
 
+class _QueueTableWidget(QTableWidget):
+    """Warteschlangen-Tabelle: meldet Entf/Rücktaste, damit MainWindow die
+    markierten Jobs entfernen kann (Mehrfachauswahl per Maus oder Strg+A)."""
+
+    delete_requested = pyqtSignal()
+
+    def keyPressEvent(self, event):
+        if (
+            event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+            and not event.modifiers()
+        ):
+            self.delete_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -258,7 +275,7 @@ class MainWindow(QMainWindow):
         self.action_remove = QAction("Löschen", self)
         self.action_remove.triggered.connect(self._on_remove_selected_clicked)
         self.action_remove.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
-        self.action_remove.setToolTip("Ausgewählten Job löschen")
+        self.action_remove.setToolTip("Ausgewählte Jobs löschen (Entf)")
         self.toolbar.addAction(self.action_remove)
 
         # Clear-Button
@@ -270,8 +287,9 @@ class MainWindow(QMainWindow):
 
     def _create_queue_table(self):
         """Erstellt die Warteschlangentabelle."""
-        self.queue_table = QTableWidget(self)
+        self.queue_table = _QueueTableWidget(self)
         self.queue_table.setColumnCount(8)
+        self.queue_table.delete_requested.connect(self._on_delete_key_pressed)
         # AME-Spaltenlayout: Format und Vorgabe (Preset) als blaue Links öffnen
         # die Exporteinstellungen, die Ausgabedatei den Speichern-Dialog.
         self.queue_table.setHorizontalHeaderLabels([
@@ -1126,7 +1144,11 @@ class MainWindow(QMainWindow):
 
     def _on_table_cell_clicked(self, row, column):
         """AME-Verhalten: Format/Vorgabe öffnen die Exporteinstellungen,
-        die Ausgabedatei öffnet den Speichern-Dialog."""
+        die Ausgabedatei öffnet den Speichern-Dialog.
+        Strg-/Umschalt-Klicks dienen der Mehrfachauswahl und öffnen nichts."""
+        modifiers = QApplication.keyboardModifiers()
+        if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
+            return
         if column in (1, 2):
             self._open_export_settings_dialog_for_row(row)
         elif column == 3:
@@ -2287,6 +2309,16 @@ class MainWindow(QMainWindow):
         rows = sorted({index.row() for index in self.queue_table.selectionModel().selectedRows()})
         return [r for r in rows if 0 <= r < len(self.jobs)]
 
+    def _on_delete_key_pressed(self):
+        """Entf in der Warteschlange: wie die Toolbar-Aktion, die während eines
+        Laufs gesperrt ist — die Tastatur darf diese Sperre nicht umgehen."""
+        if self.is_running:
+            self.statusBar().showMessage(tr(
+                "Während die Warteschlange läuft, können keine Jobs entfernt werden."
+            ))
+            return
+        self._on_remove_selected_clicked()
+
     def _on_remove_selected_clicked(self):
         """Entfernt die ausgewählten Jobs aus Tabelle und Warteschlange."""
         rows = self._selected_job_rows()
@@ -2297,17 +2329,31 @@ class MainWindow(QMainWindow):
         if busy:
             QMessageBox.warning(self, "Aktion gesperrt", "Laufende Codierungen können nicht gelöscht werden.")
 
-        # Von hinten löschen, damit die Indizes stabil bleiben
-        for row in sorted(set(rows) - set(busy), reverse=True):
-            self.jobs.pop(row)
-            self.queue_table.removeRow(row)
-            if self.current_job_idx != -1 and row < self.current_job_idx:
-                self.current_job_idx -= 1
+        to_remove = sorted(set(rows) - set(busy), reverse=True)
+        if not to_remove:
+            return
+
+        # Signale ruhen lassen: sonst lädt jede entfernte Zeile den Job der
+        # Nachbarzeile samt Bildvorschau in die Einstellungen (n-fach statt 1x).
+        self.queue_table.blockSignals(True)
+        try:
+            for row in to_remove:  # von hinten, damit die Indizes stabil bleiben
+                self.jobs.pop(row)
+                self.queue_table.removeRow(row)
+                if self.current_job_idx != -1 and row < self.current_job_idx:
+                    self.current_job_idx -= 1
+        finally:
+            self.queue_table.blockSignals(False)
 
         if not self.jobs:
             self._image_preview_pixmap = QPixmap()
             self._image_preview_rotation = 0
             self._show_queue_view()
+            self._on_job_selection_changed()
+        else:
+            # Nachrückende Zeile markieren, damit mehrmaliges Entf weiterläuft
+            self.queue_table.clearSelection()
+            self.queue_table.selectRow(min(to_remove[-1], len(self.jobs) - 1))
         self._update_ui_state()
 
     # --- QUEUE-KONTEXTMENÜ ---
@@ -2325,29 +2371,34 @@ class MainWindow(QMainWindow):
         row = self.queue_table.rowAt(pos.y())
         if row < 0 or row >= len(self.jobs):
             return
-        self.queue_table.selectRow(row)
+        # Rechtsklick in eine bestehende Mehrfachauswahl darf sie nicht auflösen
+        if row not in self._selected_job_rows():
+            self.queue_table.selectRow(row)
+        multi = len(self._selected_job_rows()) > 1
         job = self.jobs[row]
         busy = self._job_is_busy(job)
 
         menu = QMenu(self)
         act_start = menu.addAction("Nur diesen Job starten")
-        act_start.setEnabled(not self.is_running and not busy)
+        act_start.setEnabled(not self.is_running and not busy and not multi)
         act_duplicate = menu.addAction("Job duplizieren")
-        act_duplicate.setEnabled(not self.is_running and not busy)
+        act_duplicate.setEnabled(not self.is_running and not busy and not multi)
         act_trim = menu.addAction("Video verkürzen (Schnitt)...")
-        act_trim.setEnabled(not busy and not presets.is_image_input(job.get("input_file")))
+        act_trim.setEnabled(not busy and not multi and not presets.is_image_input(job.get("input_file")))
         menu.addSeparator()
         act_up = menu.addAction("Nach oben")
-        act_up.setEnabled(not self.is_running and row > 0)
+        act_up.setEnabled(not self.is_running and not multi and row > 0)
         act_down = menu.addAction("Nach unten")
-        act_down.setEnabled(not self.is_running and row < len(self.jobs) - 1)
+        act_down.setEnabled(not self.is_running and not multi and row < len(self.jobs) - 1)
         menu.addSeparator()
         act_show = menu.addAction("Zieldatei im Dateimanager anzeigen")
         act_show.setEnabled(os.path.exists(job["output_file"]))
         act_errors = menu.addAction("Fehlerdetails anzeigen")
         act_errors.setEnabled(bool(job.get("error_tail")) and job["status"] == "Fehlgeschlagen")
         menu.addSeparator()
-        act_remove = menu.addAction("Entfernen")
+        act_remove = menu.addAction(
+            tr("{count} Jobs entfernen", count=len(self._selected_job_rows())) if multi else "Entfernen"
+        )
         act_remove.setEnabled(not self.is_running and not busy)
 
         chosen = menu.exec(self.queue_table.viewport().mapToGlobal(pos))
@@ -3318,7 +3369,13 @@ class MainWindow(QMainWindow):
             self._cleanup_subtitle_temp_audio(job)
             return
             
-        if exit_code != 0 or not os.path.exists(temp_audio) or os.path.getsize(temp_audio) == 0:
+        if (
+            exit_status != QProcess.ExitStatus.NormalExit
+            or exit_code != 0
+            or not temp_audio
+            or not os.path.exists(temp_audio)
+            or os.path.getsize(temp_audio) == 0
+        ):
             self.console.append("[LME WARNING] Audio-Extraktion fehlgeschlagen. Fahre ohne Untertitel fort.")
             self._cleanup_subtitle_temp_audio(job)
             self._start_current_ffmpeg_job(job)
@@ -3412,7 +3469,7 @@ class MainWindow(QMainWindow):
             self._cleanup_subtitle_temp_audio(job)
             return
             
-        if exit_code != 0:
+        if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
             err = self.sub_ai_process.readAllStandardError().data().decode("utf-8", errors="replace").strip()
             if stage == "translate" and settings.get("_subtitle_source_srt"):
                 self.console.append(

@@ -45,6 +45,7 @@ class FFmpegWorker(QObject):
         # Puffer für unvollständige Zeilen
         self.stdout_buffer = ""
         self.stderr_buffer = ""
+        self._line_break_regex = re.compile(r"\r\n|\r|\n")
 
         # Laufende Fortschrittswerte
         self._current_speed = "0.0x"
@@ -85,10 +86,14 @@ class FFmpegWorker(QObject):
 
         # '-progress -' als globale Option direkt am Anfang (bzw. nach '-y')
         # einfügen, damit Multi-Input-Aufrufe (-i video -i srt) nicht getrennt werden.
+        # '-nostats' unterdrückt die \r-getrennte Statuszeile auf stderr: Der
+        # Fortschritt kommt über -progress, und die Statuszeilen würden sonst
+        # bei langen Encodes zu einer riesigen "Zeile" im Puffer und im Log.
+        progress_args = ["-progress", "-", "-nostats"]
         if modified_args and modified_args[0] == "-y":
-            full_args = ["-y", "-progress", "-"] + modified_args[1:]
+            full_args = ["-y"] + progress_args + modified_args[1:]
         else:
-            full_args = ["-progress", "-"] + modified_args
+            full_args = progress_args + modified_args
 
         self.status_changed.emit("Initialisiere FFmpeg...")
         
@@ -142,20 +147,30 @@ class FFmpegWorker(QObject):
         data = self.process.readAllStandardError().data().decode("utf-8", errors="replace")
         self.stderr_buffer += data
         
-        while "\n" in self.stderr_buffer:
-            line, self.stderr_buffer = self.stderr_buffer.split("\n", 1)
+        # FFmpeg trennt Statuszeilen mit '\r' statt '\n' — beides ist ein Zeilenende.
+        while True:
+            match = self._line_break_regex.search(self.stderr_buffer)
+            if match is None:
+                break
+            line = self.stderr_buffer[:match.start()]
+            self.stderr_buffer = self.stderr_buffer[match.end():]
+            self._process_stderr_line(line)
+
+    def _process_stderr_line(self, line):
+        """Gibt eine vollständige stderr-Zeile ans Log und liest ggf. die Dauer."""
+        if line:
             self.log_received.emit(line)
-            
-            # Dauer parsen, falls noch nicht geschehen (und nicht vorgegeben)
-            if self.total_duration_sec == 0.0 and not self._duration_fixed:
-                match = self.duration_regex.search(line)
-                if match:
-                    hours = int(match.group(1))
-                    minutes = int(match.group(2))
-                    seconds = int(match.group(3))
-                    centiseconds = int(match.group(4))
-                    self.total_duration_sec = (hours * 3600) + (minutes * 60) + seconds + (centiseconds / 100.0)
-                    self.log_received.emit(f"[LME INFO] Mediendauer erkannt: {hours:02d}:{minutes:02d}:{seconds:02d}.{centiseconds:02d} ({self.total_duration_sec}s)")
+
+        # Dauer parsen, falls noch nicht geschehen (und nicht vorgegeben)
+        if self.total_duration_sec == 0.0 and not self._duration_fixed:
+            match = self.duration_regex.search(line)
+            if match:
+                hours = int(match.group(1))
+                minutes = int(match.group(2))
+                seconds = int(match.group(3))
+                centiseconds = int(match.group(4))
+                self.total_duration_sec = (hours * 3600) + (minutes * 60) + seconds + (centiseconds / 100.0)
+                self.log_received.emit(f"[LME INFO] Mediendauer erkannt: {hours:02d}:{minutes:02d}:{seconds:02d}.{centiseconds:02d} ({self.total_duration_sec}s)")
 
     def _parse_progress_line(self, line):
         """Parst Schlüssel-Wert-Zeilen von FFmpeg -progress."""
@@ -228,6 +243,14 @@ class FFmpegWorker(QObject):
 
     def _handle_finished(self, exit_code, exit_status):
         """Callback für das Prozessende."""
+        # Restpuffer ohne abschließenden Zeilenumbruch gehört noch ins Log —
+        # oft ist es genau die Fehlermeldung, die die Fehlerdetails brauchen.
+        if self.process is not None:
+            self._handle_stdout()
+            self._handle_stderr()
+        if self.stderr_buffer.strip():
+            self._process_stderr_line(self.stderr_buffer)
+        self.stderr_buffer = ""
         # Bei CrashExit (Segfault, OOM-Kill) ist exit_code laut Qt-Doku undefiniert
         # und kann 0 sein — ohne diese Prüfung würde ein Absturz als Erfolg gemeldet.
         if exit_status != QProcess.ExitStatus.NormalExit:
