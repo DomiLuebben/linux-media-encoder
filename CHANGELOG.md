@@ -1,5 +1,29 @@
 # Changelog — Linux Media Encoder
 
+## [1.12.6] — 2026-10-15
+
+### Behoben & Verbessert
+- **Blu-ray Eingabeprüfung & Playlists (`ffmpeg_worker.py`, `optical_media.py`, `disc_ripper_dialog.py`)**:
+  - `bluray:`-Präfix wird vor `os.path.exists()` abgeschnitten, wodurch Eingabeprüfungen bei Blu-ray-Quellen nicht mehr fälschlich fehlschlagen.
+  - Playlist-Nummern werden vor dem Setzen von `-playlist` validiert (`playlist_num >= 0`). Bei unbekannten Playlists wird in der Titelliste `-` statt einer negativen Zahl angezeigt.
+  - Berechnete Blu-ray-Exportargumente berücksichtigen nun `crf` vs. `v_bitrate` und unterdrücken `-b:a` bei verlustfreien Audio-Codecs (`flac`, `alac`, `pcm_*`).
+- **Fortschrittsausgabe (`ffmpeg_worker.py`)**:
+  - `-progress -` wird global direkt am Anfang (nach `-y`) platziert, um Multi-Input-Argumente (`-i video -i srt`) nicht mehr zu trennen.
+- **Drehung & Zuschnitt (`presets.py`, `export_settings_dialog.py`)**:
+  - Gesetzter Drehwinkel wird sauber vor dem Zuschnitt in die Videofilterkette integriert. Bei aktiver Drehung wird Stream-Copy verhindert und Re-Encoding erzwungen.
+  - Zuschnitt und Drehung bleiben beim Wechsel von Export-Vorgaben/Quick-Presets erhalten.
+  - Seitenverhältnis wird bei manueller Zuschnittänderung oder Zurücksetzen automatisch synchronisiert.
+- **Untertitel-Handling (`presets.py`, `subtitle_editor_dialog.py`)**:
+  - Bitmap-Untertitelspuren von DVD/Blu-ray (`dvd_subtitle`, `hdmv_pgs_subtitle`) werden nur noch für MKV-Container übernommen, da MP4 sie nicht per Stream-Copy einbetten kann.
+  - `txt_editor.setPlainText()` statt `setText()` verwendet.
+  - `QProcess.ExitStatus.NormalExit` und Prozessbereinigung bei Dialogschließen (`done`/`reject`) abgesichert.
+- **Abhängigkeiten-Installation & Fehlerbehandlung (`disc_ripper_dialog.py`, `intelligent_dialog.py`)**:
+  - `errorOccurred`-Signal fängt fehlgeschlagene Starts von `pkexec` sauber ab und informiert den Nutzer.
+  - Laufende Installationsprozesse werden beim Schließen des Ripper-Dialogs sauber beendet und entkoppelt.
+  - Fehlerprüfung bei KI-Bitratenberechnung auf `NormalExit` gehärtet.
+- **CI- & Sandbox-Kompatibilität (`test_optical_media.py`)**:
+  - `ctypes.util.find_library` wird mit `patch()` gemockt, sodass die Testsuite auch in Umgebungen ohne `libdvdcss` oder optische Laufwerksbibliotheken fehlerfrei durchläuft.
+
 ## [1.12.5] — 2026-10-04
 
 ### Behoben

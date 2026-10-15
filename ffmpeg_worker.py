@@ -69,12 +69,13 @@ class FFmpegWorker(QObject):
 
     def start(self):
         """Startet den FFmpeg-Prozess."""
-        if not os.path.exists(self.input_file):
+        check_path = self.input_file[7:] if str(self.input_file).startswith("bluray:") else self.input_file
+        if not os.path.exists(check_path):
             self._emit_finished(False, f"Eingabedatei existiert nicht: {self.input_file}")
             return
 
         self.process = QProcess(self)
-        
+
         # Replace output_file (usually the last argument) with temp_output_file
         modified_args = list(self.ffmpeg_args)
         if modified_args and modified_args[-1] == self.output_file:
@@ -82,22 +83,11 @@ class FFmpegWorker(QObject):
         else:
             modified_args = [self.temp_output_file if arg == self.output_file else arg for arg in modified_args]
 
-        # Wir fügen '-progress -' an den Anfang der FFmpeg-Argumente ein, 
-        # damit FFmpeg Fortschrittsinformationen im Schlüssel-Wert-Format an stdout sendet.
-        # So trennen wir Logs (stderr) von strukturierten Fortschritten (stdout).
-        full_args = []
-        # Argumente durchsuchen und '-progress -' nach dem Input, aber vor dem Output einfügen
-        # Einfacher ist es, es direkt nach '-i <input>' einzufügen
-        input_idx = -1
-        for i, arg in enumerate(modified_args):
-            if arg == "-i":
-                input_idx = i + 2
-                break
-        
-        if input_idx != -1 and input_idx < len(modified_args):
-            full_args = modified_args[:input_idx] + ["-progress", "-"] + modified_args[input_idx:]
+        # '-progress -' als globale Option direkt am Anfang (bzw. nach '-y')
+        # einfügen, damit Multi-Input-Aufrufe (-i video -i srt) nicht getrennt werden.
+        if modified_args and modified_args[0] == "-y":
+            full_args = ["-y", "-progress", "-"] + modified_args[1:]
         else:
-            # Fallback
             full_args = ["-progress", "-"] + modified_args
 
         self.status_changed.emit("Initialisiere FFmpeg...")

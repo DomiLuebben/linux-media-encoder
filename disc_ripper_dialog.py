@@ -659,7 +659,8 @@ class DiscRipperDialog(QDialog):
             self.table_titles.setCellWidget(row, 0, chk_wrap)
 
             # Nr.
-            num_item = QTableWidgetItem(f"{t.title_num:02d}")
+            num_str = f"{t.title_num:02d}" if t.title_num >= 0 else "-"
+            num_item = QTableWidgetItem(num_str)
             num_item.setFlags(num_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table_titles.setItem(row, 1, num_item)
 
@@ -849,7 +850,7 @@ class DiscRipperDialog(QDialog):
                 input_args = []
                 if res.disc_type == DiscType.DVD_VIDEO:
                     input_args = ["-f", "dvdvideo", "-title", str(title.title_num), "-chapter_start", "1", "-chapter_end", "0"]
-                elif res.disc_type == DiscType.BLURAY:
+                elif res.disc_type == DiscType.BLURAY and title.title_num >= 0:
                     input_args = ["-playlist", str(title.title_num)]
 
                 job = {
@@ -1278,7 +1279,7 @@ class DiscRipperDialog(QDialog):
         answer = QMessageBox.question(
             self,
             tr("Fehlende Komponenten installieren"),
-            details,
+            LocalizedString(str(details), str(details)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1293,7 +1294,24 @@ class DiscRipperDialog(QDialog):
         self._install_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self._install_process.readyReadStandardOutput.connect(self._on_install_output)
         self._install_process.finished.connect(self._on_install_finished)
+        self._install_process.errorOccurred.connect(self._on_install_error)
         self._install_process.start(plan.command[0], plan.command[1:])
+
+    def _on_install_error(self, error: QProcess.ProcessError):
+        if error != QProcess.ProcessError.FailedToStart:
+            return
+        self._install_process = None
+        self.lbl_status.setText(tr("Bereit"))
+        self.btn_install_deps.setEnabled(True)
+        QMessageBox.warning(
+            self,
+            tr("Installation fehlgeschlagen"),
+            tr(
+                "Die Installation wurde abgebrochen oder ist fehlgeschlagen "
+                "(Rückgabewert {code}). Einzelheiten stehen im Protokoll.",
+                code=-1,
+            ),
+        )
 
     def _on_install_output(self):
         data = self._install_process.readAllStandardOutput().data().decode("utf-8", errors="replace")
@@ -1400,6 +1418,18 @@ class DiscRipperDialog(QDialog):
             self._is_ripping = False
             if self.active_worker:
                 self.active_worker.stop()
+        proc = getattr(self, "_install_process", None)
+        if proc is not None:
+            try:
+                proc.finished.disconnect()
+                proc.errorOccurred.disconnect()
+                proc.readyReadStandardOutput.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if proc.state() != QProcess.ProcessState.NotRunning:
+                proc.kill()
+                proc.waitForFinished(500)
+            self._install_process = None
 
     def _set_ui_ripping_state(self, is_ripping: bool):
         self._is_ripping = is_ripping

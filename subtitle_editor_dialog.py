@@ -112,7 +112,13 @@ class SubtitleEditorDialog(QDialog):
         
     def _on_audio_extracted(self, exit_code, exit_status):
         """Phase 2: pass the extracted audio to the local AI CLI."""
-        if exit_code != 0 or not os.path.exists(self.temp_audio_path) or os.path.getsize(self.temp_audio_path) == 0:
+        if (
+            exit_status != QProcess.ExitStatus.NormalExit
+            or exit_code != 0
+            or not self.temp_audio_path
+            or not os.path.exists(self.temp_audio_path)
+            or os.path.getsize(self.temp_audio_path) == 0
+        ):
             self.lbl_status.setText("Fehler: Audio-Extraktion fehlgeschlagen.")
             self.progress_bar.setVisible(False)
             self._cleanup_temp_files()
@@ -145,7 +151,7 @@ class SubtitleEditorDialog(QDialog):
         )
 
     def _on_ai_finished(self, exit_code, exit_status):
-        if exit_code != 0:
+        if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
             err = self.sub_ai_process.readAllStandardError().data().decode("utf-8", errors="replace").strip()
             self._cleanup_temp_files()
             self.progress_bar.setVisible(False)
@@ -206,7 +212,7 @@ class SubtitleEditorDialog(QDialog):
     def _finish_srt(self, srt_content):
         self.srt_content = srt_content
         self.lbl_status.setText("Transkription erfolgreich abgeschlossen. Untertitel können jetzt bearbeitet werden.")
-        self.txt_editor.setText(self.srt_content)
+        self.txt_editor.setPlainText(self.srt_content)
         self.txt_editor.setEnabled(True)
         self.btn_save.setEnabled(True)
 
@@ -263,7 +269,7 @@ class SubtitleEditorDialog(QDialog):
                 pass
             self.temp_audio_path = None
             
-    def reject(self):
+    def _stop_processes(self):
         if self.sub_process:
             try:
                 self.sub_process.finished.disconnect()
@@ -282,5 +288,14 @@ class SubtitleEditorDialog(QDialog):
             if self.sub_ai_process.state() != QProcess.ProcessState.NotRunning:
                 self.sub_ai_process.kill()
                 self.sub_ai_process.waitForFinished(1000)
+        self.sub_process = None
+        self.sub_ai_process = None
         self._cleanup_temp_files()
+
+    def done(self, result):
+        self._stop_processes()
+        super().done(result)
+
+    def reject(self):
+        self._stop_processes()
         super().reject()

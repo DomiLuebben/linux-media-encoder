@@ -243,7 +243,7 @@ class IntelligentBitrateDialog(QDialog):
         self.btn_calc_formula.setEnabled(True)
         engine = self.combo_engine.currentText()
         
-        if exit_code != 0:
+        if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
             self.lbl_status.setText(tr(
                 "{engine}-Fehler (Exit-Code: {code}). Wechsle zu Schnell-Formel.",
                 engine=tr(engine), code=exit_code,

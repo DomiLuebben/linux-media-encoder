@@ -1173,7 +1173,7 @@ class ExportSettingsDialog(QDialog):
             self.settings["preset_label"] = text
             if keep_rotate is not None:
                 self.settings["rotate"] = keep_rotate
-            if keep_crop and self.settings.get("container") in presets.IMAGE_CONTAINERS:
+            if keep_crop:
                 self.settings["crop"] = keep_crop
             if self.settings.get("container") not in presets.IMAGE_CONTAINERS:
                 if keep_subs:
@@ -1187,11 +1187,17 @@ class ExportSettingsDialog(QDialog):
 
         quick_settings = presets.quick_preset_settings(text)
         if quick_settings is not None:
+            keep_crop = presets.get_crop(self.settings)
+            keep_rotate = self.settings.get("rotate")
             keep_subs = {k: self.settings[k] for k in presets.SUBTITLE_SETTING_KEYS if k in self.settings}
             keep_trim = {k: self.settings[k] for k in ("trim_start", "trim_end") if k in self.settings}
             self.settings = presets.preserve_disc_settings(quick_settings, self.settings)
             self.settings["custom_mode"] = False
             self.settings["preset_label"] = text
+            if keep_rotate is not None:
+                self.settings["rotate"] = keep_rotate
+            if keep_crop:
+                self.settings["crop"] = keep_crop
             if self.settings.get("container") not in presets.IMAGE_CONTAINERS:
                 if keep_subs:
                     self.settings.update(keep_subs)
@@ -1395,6 +1401,7 @@ class ExportSettingsDialog(QDialog):
             self.settings["crop"] = crop
         else:
             self.settings.pop("crop", None)
+        self._sync_size_spins_to_aspect("width")
         self._update_crop_ui()
         self._update_summary()
 
@@ -1432,6 +1439,7 @@ class ExportSettingsDialog(QDialog):
         """Setzt den Zuschnitt zurück (volles Bild)."""
         self.settings.pop("crop", None)
         self.preview_label.set_crop(None)
+        self._sync_size_spins_to_aspect("width")
         self._update_crop_ui()
         self._update_summary()
 
@@ -2133,8 +2141,10 @@ class ExportSettingsDialog(QDialog):
             )
         self.lbl_trim_info.setText(text)
 
-    def done(self, result):
+    def _cleanup_resources(self):
         """Räumt Vorschau-/Probe-Prozesse und Temp-Dateien beim Schließen auf."""
+        if hasattr(self, "_probe_timer") and self._probe_timer:
+            self._probe_timer.stop()
         if self._probe_proc:
             try:
                 self._probe_proc.finished.disconnect()
@@ -2174,10 +2184,13 @@ class ExportSettingsDialog(QDialog):
             except OSError:
                 pass
         self._preview_temp_files.clear()
+
+    def done(self, result):
+        self._cleanup_resources()
         super().done(result)
 
     def closeEvent(self, event):
-        self.done(0)
+        self._cleanup_resources()
         super().closeEvent(event)
 
 

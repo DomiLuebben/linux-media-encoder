@@ -1199,7 +1199,7 @@ def build_bluray_rip_args(
     if preset_settings and "ignore_errors" in preset_settings:
         ignore_errors = bool(preset_settings["ignore_errors"])
 
-    input_args = ["-playlist", str(playlist_num)]
+    input_args = ["-playlist", str(playlist_num)] if (playlist_num is not None and playlist_num >= 0) else []
     if ignore_errors:
         input_args = ["-err_detect", "ignore_err", "-fflags", "+discardcorrupt+genpts"] + input_args
 
@@ -1236,9 +1236,22 @@ def build_bluray_rip_args(
         if preset_settings:
             v_codec = preset_settings.get("video_codec", "libx264")
             a_codec = preset_settings.get("audio_codec", "aac")
-            crf = preset_settings.get("crf", "20")
+            v_bitrate = preset_settings.get("video_bitrate", "")
+            crf = preset_settings.get("crf", "")
             a_bitrate = preset_settings.get("audio_bitrate", "192k")
-            args += ["-c:v", v_codec, "-crf", str(crf), "-c:a", a_codec, "-b:a", str(a_bitrate)]
+
+            args += ["-c:v", v_codec]
+            if crf:
+                args += ["-crf", str(crf)]
+            elif v_bitrate:
+                args += ["-b:v", str(v_bitrate)]
+            else:
+                args += ["-crf", "20"]
+
+            args += ["-c:a", a_codec]
+            if a_bitrate and a_codec not in ("flac", "alac", "pcm_s16le", "pcm_s24le", "copy"):
+                args += ["-b:a", str(a_bitrate)]
+
             if subtitle_stream_idx is not None:
                 args += ["-c:s", "copy"]
         else:

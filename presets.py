@@ -1213,10 +1213,12 @@ def get_ffmpeg_args(input_file, output_file, settings):
     v_lower = str(settings.get("video_codec", "libx264")).strip().lower()
     a_lower = _resolve_audio_codec(settings).lower()
     crop = get_crop(settings)
+    rotate_angle = get_rotation(settings)
     is_copy_cut = (
         not soft_subtitle
         and not hard_subtitle
         and not crop
+        and not rotate_angle
         and (v_lower == "copy" or (v_lower == "none" and a_lower == "copy"))
     )
 
@@ -1264,8 +1266,8 @@ def get_ffmpeg_args(input_file, output_file, settings):
     if v_codec.lower() in ("copy", "none"):
         v_codec = v_codec.lower()
 
-    # Wenn Hard-Subtitles oder Crop aktiv sind, muss das Video neu codiert werden (keine Stream-Kopie möglich)
-    if (hard_subtitle or crop) and v_codec == "copy":
+    # Wenn Hard-Subtitles, Crop oder Drehung aktiv sind, muss das Video neu codiert werden
+    if (hard_subtitle or crop or rotate_angle) and v_codec == "copy":
         v_codec = _default_video_codec_for_container(container)
 
     # Stream-Mapping bei Soft-Untertitelung (um korrekte Spurenzuweisung zu garantieren)
@@ -1288,6 +1290,9 @@ def get_ffmpeg_args(input_file, output_file, settings):
         args.extend(["-c:v", v_codec])
         if v_codec != "copy":
             vf_filters = []
+            rotate_expr = rotate_filter(rotate_angle)
+            if rotate_expr:
+                vf_filters.append(rotate_expr)
             if crop:
                 cw = max(2, crop["w"] & ~1)
                 ch = max(2, crop["h"] & ~1)
@@ -1413,13 +1418,14 @@ def get_ffmpeg_args(input_file, output_file, settings):
                 args.extend(["-map", f"0:a:{audio_idx}?"])
             else:
                 args.extend(["-map", "0:a:0?"])
-        if sub_idx is not None:
+        # DVD-/Blu-ray-Untertitel sind Bitmap-Streams (dvd_subtitle/hdmv_pgs_subtitle)
+        # und können nur in MKV per Stream-Copy übernommen werden.
+        if sub_idx is not None and container.lower() == "mkv":
             if sub_idx == -1:
                 args.extend(["-map", "0:s?"])
             elif sub_idx >= 0:
                 args.extend(["-map", f"0:s:{sub_idx}?"])
-            if container.lower() == "mkv":
-                args.extend(["-c:s", "copy"])
+            args.extend(["-c:s", "copy"])
 
     # MP4/MOV streamingfähig machen (Moov-Atom an den Anfang → schnelles Web-Seeking).
     if container in ("mp4", "mov") and v_codec != "none":

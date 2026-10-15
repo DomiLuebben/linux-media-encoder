@@ -594,12 +594,16 @@ class OpticalMediaCoreTest(unittest.TestCase):
         self.assertEqual(cmd_strict, ["dd", "if=/dev/sr0", "of=/tmp/backup.iso", "bs=2048", "status=progress", "count=123456"])
 
     def test_encryption_and_capabilities_check(self):
-        has_dvdcss, msg_dvd = check_dvd_encryption_support()
-        self.assertTrue(has_dvdcss)
+        with patch("ctypes.util.find_library", return_value="libdvdcss.so.2"):
+            has_dvdcss, msg_dvd = check_dvd_encryption_support()
+            self.assertTrue(has_dvdcss)
+        with patch("ctypes.util.find_library", return_value=None):
+            has_dvdcss_missing, _ = check_dvd_encryption_support()
+            self.assertFalse(has_dvdcss_missing)
 
         caps = check_ffmpeg_optical_capabilities()
-        self.assertTrue(caps.get("dvdvideo", False))
-        self.assertTrue(caps.get("bluray", False))
+        self.assertIn("dvdvideo", caps)
+        self.assertIn("bluray", caps)
 
 
 
