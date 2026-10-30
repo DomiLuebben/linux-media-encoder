@@ -5,6 +5,7 @@ Verwaltet den asynchronen FFmpeg-Prozess mittels QProcess,
 parst den Fortschritt und leitet Logs an die GUI weiter.
 """
 
+import math
 import re
 import os
 import uuid
@@ -26,7 +27,10 @@ class FFmpegWorker(QObject):
         # Erwartete Ausgabedauer kann vorgegeben werden (z. B. bei Trim kürzer
         # als die Quelle) — sonst wird sie aus dem FFmpeg-Header geparst.
         self.total_duration_sec = float(total_duration) if total_duration else 0.0
-        self._duration_fixed = bool(total_duration)
+        if not math.isfinite(self.total_duration_sec) or self.total_duration_sec < 0:
+            self.total_duration_sec = 0.0
+        self._duration_fixed = self.total_duration_sec > 0
+        self._started = False
 
         # Eindeutige Temp-Ausgabedatei im selben Verzeichnis: So bleibt
         # os.replace() atomar, ohne dass parallele/abgestürzte Worker denselben
@@ -70,6 +74,9 @@ class FFmpegWorker(QObject):
 
     def start(self):
         """Startet den FFmpeg-Prozess."""
+        if self._started or self._finished_emitted:
+            return
+        self._started = True
         check_path = self.input_file[7:] if str(self.input_file).startswith("bluray:") else self.input_file
         if not os.path.exists(check_path):
             self._emit_finished(False, f"Eingabedatei existiert nicht: {self.input_file}")
@@ -107,8 +114,7 @@ class FFmpegWorker(QObject):
         # Wir gehen davon aus, dass 'ffmpeg' im System-Pfad liegt
         self.process.start("ffmpeg", full_args)
 
-        if not self.process.waitForStarted(3000):
-            self._emit_finished(False, "FFmpeg konnte nicht gestartet werden. Ist es installiert?")
+        # FailedToStart is delivered asynchronously via errorOccurred.
 
     def _handle_error(self, error):
         """Fängt Prozess-Start-Fehler ab (z. B. ffmpeg nicht im PATH)."""
@@ -117,6 +123,8 @@ class FFmpegWorker(QObject):
 
     def stop(self):
         """Bricht den laufenden FFmpeg-Prozess ab."""
+        if self._finished_emitted:
+            return
         if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
             self.status_changed.emit("Breche ab...")
             # Den regulären finished-Handler trennen, damit das Prozessende
@@ -130,7 +138,7 @@ class FFmpegWorker(QObject):
             if not self.process.waitForFinished(2000):
                 self.process.kill()
                 self.process.waitForFinished(1000)
-            self._emit_finished(False, "Prozess abgebrochen.")
+        self._emit_finished(False, "Prozess abgebrochen.")
 
     def _handle_stdout(self):
         """Liest Fortschrittsinformationen von stdout."""
@@ -218,7 +226,7 @@ class FFmpegWorker(QObject):
                 
                 remaining_sec = 0.0
                 if speed_factor > 0:
-                    remaining_sec = (self.total_duration_sec - current_sec) / speed_factor
+                    remaining_sec = max(0.0, (self.total_duration_sec - current_sec) / speed_factor)
                 
                 # Formatierung der verbleibenden Zeit
                 rem_h = int(remaining_sec // 3600)
@@ -243,6 +251,8 @@ class FFmpegWorker(QObject):
 
     def _handle_finished(self, exit_code, exit_status):
         """Callback für das Prozessende."""
+        if self._finished_emitted:
+            return
         # Restpuffer ohne abschließenden Zeilenumbruch gehört noch ins Log —
         # oft ist es genau die Fehlermeldung, die die Fehlerdetails brauchen.
         if self.process is not None:
@@ -257,6 +267,8 @@ class FFmpegWorker(QObject):
             self._emit_finished(False, "Konvertierung fehlgeschlagen (FFmpeg-Prozess abgestürzt).")
         elif exit_code == 0:
             try:
+                if os.path.getsize(self.temp_output_file) == 0:
+                    raise OSError("Die erzeugte Datei ist leer.")
                 os.replace(self.temp_output_file, self.output_file)
                 self.progress_updated.emit(100.0, "0.0x", "Fertig")
                 self._emit_finished(True, "Erfolgreich konvertiert.")

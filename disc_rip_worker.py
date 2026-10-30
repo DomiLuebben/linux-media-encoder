@@ -26,7 +26,22 @@ def audio_cd_output_filename(track: AudioTrackInfo, codec: str) -> str:
     return f"{track.track_num:02d} - {safe_title}.{ext}"
 
 
-class AudioCdRipWorker(QObject):
+class _RipWorker(QObject):
+    """One-shot lifecycle shared by direct CD and ISO workers."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._finished_emitted = False
+        self._started = False
+
+    def _finish(self, success, message):
+        if self._finished_emitted:
+            return
+        self._finished_emitted = True
+        self.finished.emit(success, message)
+
+
+class AudioCdRipWorker(_RipWorker):
     """
     Rippt ausgewählte Audio-CD-Tracks via cdparanoia und encodiert sie via FFmpeg
     inklusive Metadaten (Titel, Artist, Album, Tracknummer).
@@ -64,24 +79,33 @@ class AudioCdRipWorker(QObject):
 
     def start(self):
         """Startet den Ripping-Vorgang für den ersten Track."""
+        if self._started or self._finished_emitted:
+            return
+        self._started = True
         if not self.tracks:
-            self.finished.emit(False, "Keine Tracks zum Rippen ausgewählt.")
+            self._finish(False, "Keine Tracks zum Rippen ausgewählt.")
             return
 
-        os.makedirs(self.output_dir, exist_ok=True)
+        try:
+            os.makedirs(self.output_dir, exist_ok=True)
+        except OSError as exc:
+            self._finish(False, f"Zielordner konnte nicht erstellt werden: {exc}")
+            return
         self.current_track_idx = 0
         self._is_cancelled = False
         self._rip_next_track()
 
     def stop(self):
         """Bricht den laufenden Ripping-Vorgang ab."""
+        if self._finished_emitted:
+            return
         self._is_cancelled = True
         self.status_changed.emit("Breche Ripping ab...")
         if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
             self.process.kill()
             self.process.waitForFinished(1000)
         self._cleanup_temp_files()
-        self.finished.emit(False, "Ripping abgebrochen.")
+        self._finish(False, "Ripping abgebrochen.")
 
     def _cleanup_temp_files(self):
         """Löscht temporäre Staging-Dateien."""
@@ -93,12 +117,12 @@ class AudioCdRipWorker(QObject):
                     pass
 
     def _rip_next_track(self):
-        if self._is_cancelled:
+        if self._is_cancelled or self._finished_emitted:
             return
 
         if self.current_track_idx >= len(self.tracks):
             self.progress_updated.emit(100.0, "", "Fertig")
-            self.finished.emit(True, f"Alle {len(self.tracks)} Audio-Tracks erfolgreich gerippt.")
+            self._finish(True, f"Alle {len(self.tracks)} Audio-Tracks erfolgreich gerippt.")
             return
 
         track = self.tracks[self.current_track_idx]
@@ -131,7 +155,7 @@ class AudioCdRipWorker(QObject):
         self.process.start(cmd[0], cmd[1:])
 
     def _start_encode_step(self):
-        if self._is_cancelled:
+        if self._is_cancelled or self._finished_emitted:
             return
 
         track = self.tracks[self.current_track_idx]
@@ -156,12 +180,12 @@ class AudioCdRipWorker(QObject):
         self.process.start("ffmpeg", args)
 
     def _handle_process_error(self, error: QProcess.ProcessError):
-        if self._is_cancelled:
+        if self._is_cancelled or self._finished_emitted:
             return
         if error == QProcess.ProcessError.FailedToStart:
             step_name = "cdparanoia" if self._current_step == "extract" else "ffmpeg"
             self._cleanup_temp_files()
-            self.finished.emit(False, f"Programm '{step_name}' konnte nicht gestartet werden. Ist es installiert?")
+            self._finish(False, f"Programm '{step_name}' konnte nicht gestartet werden. Ist es installiert?")
 
     def _handle_process_stderr(self):
         if not self.process:
@@ -173,13 +197,19 @@ class AudioCdRipWorker(QObject):
                 self.log_received.emit(line_str)
 
     def _handle_step_finished(self, exit_code: int, exit_status: QProcess.ExitStatus):
-        if self._is_cancelled:
+        if self._is_cancelled or self._finished_emitted:
             return
+
+        # Reap completed extraction/encoding processes throughout long CDs.
+        if self.process:
+            self._handle_process_stderr()
+            self.process.deleteLater()
+            self.process = None
 
         if exit_code != 0 or exit_status != QProcess.ExitStatus.NormalExit:
             step_name = "Extraktion" if self._current_step == "extract" else "Codierung"
             self._cleanup_temp_files()
-            self.finished.emit(False, f"Fehler bei {step_name} von Track {self.tracks[self.current_track_idx].track_num} (Exit Code {exit_code}).")
+            self._finish(False, f"Fehler bei {step_name} von Track {self.tracks[self.current_track_idx].track_num} (Exit Code {exit_code}).")
             return
 
         if self._current_step == "extract":
@@ -193,7 +223,7 @@ class AudioCdRipWorker(QObject):
                 os.replace(self._tmp_out_file, self._final_out_file)
             except OSError as e:
                 self._cleanup_temp_files()
-                self.finished.emit(False, f"Konnte Zieldatei nicht erstellen: {e}")
+                self._finish(False, f"Konnte Zieldatei nicht erstellen: {e}")
                 return
 
             if os.path.exists(self._tmp_wav_file):
@@ -207,7 +237,7 @@ class AudioCdRipWorker(QObject):
             self._rip_next_track()
 
 
-class IsoDumpWorker(QObject):
+class IsoDumpWorker(_RipWorker):
     """
     Erstellt ein 1:1 ISO-Abbild eines optischen Datenträgers via dd mit Fortschrittsüberwachung.
     """
@@ -238,9 +268,16 @@ class IsoDumpWorker(QObject):
 
     def start(self):
         """Startet den dd-Prozess."""
+        if self._started or self._finished_emitted:
+            return
+        self._started = True
         self._is_cancelled = False
         out_dir = os.path.dirname(self.output_iso_path) or "."
-        os.makedirs(out_dir, exist_ok=True)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except OSError as exc:
+            self._finish(False, f"Zielordner konnte nicht erstellt werden: {exc}")
+            return
 
         block_count = None
         if self.total_size_bytes > 0:
@@ -264,7 +301,7 @@ class IsoDumpWorker(QObject):
         self.process.start(cmd[0], cmd[1:])
 
     def _handle_process_error(self, error: QProcess.ProcessError):
-        if self._is_cancelled:
+        if self._is_cancelled or self._finished_emitted:
             return
         if error == QProcess.ProcessError.FailedToStart:
             if os.path.exists(self._tmp_iso_path):
@@ -272,10 +309,12 @@ class IsoDumpWorker(QObject):
                     os.remove(self._tmp_iso_path)
                 except OSError:
                     pass
-            self.finished.emit(False, "Programm 'dd' konnte nicht gestartet werden. Ist es installiert?")
+            self._finish(False, "Programm 'dd' konnte nicht gestartet werden. Ist es installiert?")
 
     def stop(self):
         """Bricht den ISO-Dump ab."""
+        if self._finished_emitted:
+            return
         self._is_cancelled = True
         self.status_changed.emit("Breche ISO-Dump ab...")
         if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
@@ -286,7 +325,7 @@ class IsoDumpWorker(QObject):
                 os.remove(self._tmp_iso_path)
             except OSError:
                 pass
-        self.finished.emit(False, "ISO-Abbild-Erstellung abgebrochen.")
+        self._finish(False, "ISO-Abbild-Erstellung abgebrochen.")
 
     def _handle_stderr(self):
         if not self.process:
@@ -309,7 +348,7 @@ class IsoDumpWorker(QObject):
                 self.progress_updated.emit(pct, speed, f"{copied_bytes // (1024*1024)} MB kopiert")
 
     def _handle_finished(self, exit_code: int, exit_status: QProcess.ExitStatus):
-        if self._is_cancelled:
+        if self._is_cancelled or self._finished_emitted:
             return
 
         if exit_code == 0 and exit_status == QProcess.ExitStatus.NormalExit:
@@ -319,17 +358,17 @@ class IsoDumpWorker(QObject):
                     raise OSError(f"Unvollständiges ISO-Abbild ({size} von {self.total_size_bytes} Bytes).")
                 os.replace(self._tmp_iso_path, self.output_iso_path)
                 self.progress_updated.emit(100.0, "", "Fertig")
-                self.finished.emit(True, f"1:1 ISO-Abbild erfolgreich erstellt: {self.output_iso_path}")
+                self._finish(True, f"1:1 ISO-Abbild erfolgreich erstellt: {self.output_iso_path}")
             except OSError as e:
                 try:
                     os.remove(self._tmp_iso_path)
                 except OSError:
                     pass
-                self.finished.emit(False, f"Konnte ISO-Datei nicht speichern: {e}")
+                self._finish(False, f"Konnte ISO-Datei nicht speichern: {e}")
         else:
             if os.path.exists(self._tmp_iso_path):
                 try:
                     os.remove(self._tmp_iso_path)
                 except OSError:
                     pass
-            self.finished.emit(False, f"Fehler bei ISO-Erstellung (dd Exit Code {exit_code}).")
+            self._finish(False, f"Fehler bei ISO-Erstellung (dd Exit Code {exit_code}).")

@@ -75,7 +75,7 @@ class FFmpegArgsTest(unittest.TestCase):
         settings["scale_mode"] = "source"
         settings["fps"] = "30"
         args = presets.get_ffmpeg_args("input.mp4", "output.mp4", settings)
-        self.assertNotIn("-vf", args)
+        self.assertEqual(args[args.index("-vf") + 1], "scale=trunc(iw/2)*2:trunc(ih/2)*2")
         self.assertEqual(args[args.index("-r") + 1], "30")
 
         # "Wie Quelle" bzw. leer -> kein -r
@@ -114,13 +114,13 @@ class FFmpegArgsTest(unittest.TestCase):
 
         self.assertEqual(args[args.index("-vf") + 1], "scale=1918:1078")
 
-    def test_video_scale_mode_source_skips_scaling(self):
+    def test_video_scale_mode_source_only_ensures_even_dimensions(self):
         settings = dict(presets.PRESETS["MP4 (H.264 / AAC) - Standard 1080p"])
         settings["scale_mode"] = "source"
 
         args = presets.get_ffmpeg_args("input.mp4", "output.mp4", settings)
 
-        self.assertNotIn("-vf", args)
+        self.assertEqual(args[args.index("-vf") + 1], "scale=trunc(iw/2)*2:trunc(ih/2)*2")
         self.assertNotIn("-s", args)
         # fps ist von der Skalierung entkoppelt: das Preset nennt explizit 25
         self.assertEqual(args[args.index("-r") + 1], "25")

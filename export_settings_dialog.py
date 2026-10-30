@@ -87,6 +87,7 @@ class ExportSettingsDialog(QDialog):
         self.input_file = input_file
         self.output_file = output_file
         self.settings = dict(settings)  # Kopie anfertigen
+        self._closed = False
         self._loading_settings = False
         self._preview_temp_files = set()  # erzeugte Vorschau-JPGs für Cleanup
 
@@ -1333,13 +1334,16 @@ class ExportSettingsDialog(QDialog):
                 
         from subtitle_editor_dialog import SubtitleEditorDialog
         dialog = SubtitleEditorDialog(self.input_file, self.output_file, src_lang, tr_lang, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            saved_path = dialog.get_saved_srt_path()
-            if saved_path:
-                self.edit_sub_file_path.setText(saved_path)
-                self.chk_subtitles.setChecked(True)
-                self._update_summary()
-                self._trigger_preview_update()
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                saved_path = dialog.get_saved_srt_path()
+                if saved_path:
+                    self.edit_sub_file_path.setText(saved_path)
+                    self.chk_subtitles.setChecked(True)
+                    self._update_summary()
+                    self._trigger_preview_update()
+        finally:
+            dialog.deleteLater()
 
     def _on_slider_value_changed(self, value):
         duration = self.source_info.get("duration", 0.0) if self.source_info else 0.0
@@ -1456,6 +1460,7 @@ class ExportSettingsDialog(QDialog):
             except (TypeError, RuntimeError):
                 pass
             self._retained_procs.discard(proc)
+            self._discard_preview_file(proc.property("preview_path"))
             proc.deleteLater()
 
         # finished liefert (exit_code, exit_status), errorOccurred nur einen
@@ -1468,7 +1473,10 @@ class ExportSettingsDialog(QDialog):
         """Extrahiert das Vorschaubild asynchron via QProcess.
         Die frühere synchrone Variante blockierte die UI bis zu 8 Sekunden
         (Dialog-Öffnen und jede Slider-Bewegung)."""
-        if not self.input_file or not os.path.exists(self.input_file):
+        if self._closed:
+            return
+        local_path = self.input_file[7:] if str(self.input_file).startswith("bluray:") else self.input_file
+        if not self.input_file or not os.path.exists(local_path):
             self._set_preview_image(None)
             return
         # Reine Audio-Datei -> kein Frame
@@ -1532,6 +1540,7 @@ class ExportSettingsDialog(QDialog):
             "-frames:v", "1", "-vf", ",".join(filters), "-q:v", "3", out_path,
         ])
         proc = QProcess(self)
+        proc.setProperty("preview_path", out_path)
         self._preview_proc = proc
         proc.finished.connect(
             lambda code, _status, pr=proc, p=out_path, slf=self: slf._on_preview_extracted(pr, p, code)
@@ -1542,21 +1551,37 @@ class ExportSettingsDialog(QDialog):
         proc.start("ffmpeg", args)
 
 
+    def _discard_preview_file(self, path):
+        if path and path in self._preview_temp_files:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            self._preview_temp_files.discard(path)
+
     def _on_preview_extracted(self, proc, out_path, exit_code):
         if proc is not self._preview_proc:
             return  # veraltete Extraktion, wurde inzwischen ersetzt/verworfen
         self._preview_proc = None
+        previous_path = self.preview_frame_path
+        self.preview_frame_path = None
         if exit_code == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             self.preview_frame_path = out_path
             self._set_preview_image(out_path)
         else:
             self._set_preview_image(None)
+            self._discard_preview_file(out_path)
+        if previous_path != self.preview_frame_path:
+            self._discard_preview_file(previous_path)
+        proc.deleteLater()
 
     def _on_preview_failed_to_start(self, proc, error):
         """ffmpeg fehlt: 'finished' feuert nie — Fallback-Bild anzeigen."""
         if error != QProcess.ProcessError.FailedToStart or proc is not self._preview_proc:
             return
         self._preview_proc = None
+        self._discard_preview_file(proc.property("preview_path"))
+        proc.deleteLater()
         self._set_preview_image(None)
 
 
@@ -1854,18 +1879,23 @@ class ExportSettingsDialog(QDialog):
         schreibt nur ein Python-Attribut; ein QTimer des Dialogs holt das
         Ergebnis ab — der Timer stirbt mit dem Dialog, es gibt also keine
         Qt-Aufrufe auf einem zerstörten Objekt."""
-        if not self.input_file or not os.path.exists(self.input_file):
+        if self._closed:
+            return
+        local_path = self.input_file[7:] if str(self.input_file).startswith("bluray:") else self.input_file
+        if not self.input_file or not os.path.exists(local_path):
             self._probe_done = True
             return
         self._probe_result = None
         input_file = self.input_file
         input_options = list(self.settings.get("input_args") or [])
-        if self.settings.get("disc_type") == "bluray":
+        if self.settings.get("disc_type") == "bluray" and not str(input_file).startswith("bluray:"):
             from optical_media import find_bdmv_root
             input_file = f"bluray:{find_bdmv_root(input_file) or input_file}"
         holder = self
 
         def work():
+            if holder._closed:
+                return
             import subprocess
             try:
                 r = subprocess.run(
@@ -1877,8 +1907,8 @@ class ExportSettingsDialog(QDialog):
             except (OSError, subprocess.SubprocessError):
                 holder._probe_result = ""
 
-        import threading
-        threading.Thread(target=work, daemon=True, name="lme-dialog-ffprobe").start()
+        from media_probe import submit_probe
+        submit_probe(work)
 
         from PyQt6.QtCore import QTimer
         self._probe_timer = QTimer(self)
@@ -1906,12 +1936,12 @@ class ExportSettingsDialog(QDialog):
             import json
             data = json.loads(stdout)
             try:
-                info["duration"] = float(data.get("format", {}).get("duration", 0.0))
+                info["duration"] = presets.parse_seconds(data.get("format", {}).get("duration")) or 0.0
             except (TypeError, ValueError):
                 info["duration"] = 0.0
             for s in data.get("streams", []):
                 stype = s.get("codec_type")
-                if stype == "video" and info["width"] is None:
+                if stype == "video" and info["width"] is None and not s.get("disposition", {}).get("attached_pic"):
                     info["width"] = s.get("width")
                     info["height"] = s.get("height")
                     info["v_codec"] = s.get("codec_name")
@@ -2143,6 +2173,9 @@ class ExportSettingsDialog(QDialog):
 
     def _cleanup_resources(self):
         """Räumt Vorschau-/Probe-Prozesse und Temp-Dateien beim Schließen auf."""
+        self._closed = True
+        if hasattr(self, "_preview_debounce"):
+            self._preview_debounce.stop()
         if hasattr(self, "_probe_timer") and self._probe_timer:
             self._probe_timer.stop()
         if self._probe_proc:
@@ -2197,7 +2230,8 @@ class ExportSettingsDialog(QDialog):
     @staticmethod
     def _format_timecode(seconds):
         """Formatiert Sekunden als HH:MM:SS.ms (mit Millisekunden-Genauigkeit)."""
-        if not seconds or seconds <= 0:
+        seconds = presets.parse_seconds(seconds)
+        if not seconds:
             return "00:00:00.000"
         h = int(seconds // 3600)
         m = int((seconds % 3600) // 60)
@@ -2227,13 +2261,13 @@ class ExportSettingsDialog(QDialog):
                     h = int(parts[0])
                     m = int(parts[1])
                     s = float(parts[2])
-                    return h * 3600 + m * 60 + s
+                    return presets.parse_seconds(h * 3600 + m * 60 + s)
                 elif len(parts) == 2:
                     m = int(parts[0])
                     s = float(parts[1])
-                    return m * 60 + s
+                    return presets.parse_seconds(m * 60 + s)
                 return None
-            return float(text)
+            return presets.parse_seconds(text)
         except ValueError:
             return None
 
@@ -2245,13 +2279,16 @@ class ExportSettingsDialog(QDialog):
         from PyQt6.QtWidgets import QDialog
         from intelligent_dialog import IntelligentBitrateDialog
         dialog = IntelligentBitrateDialog(duration, codec, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            v_bitrate_mbps, a_bitrate_kbps = dialog.get_calculated_bitrates()
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                v_bitrate_mbps, a_bitrate_kbps = dialog.get_calculated_bitrates()
             
-            # Werte in die GUI eintragen
-            self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
-            self._configure_bitrate_spin(v_bitrate_mbps)
-            self.spin_bitrate_val.setValue(v_bitrate_mbps)
-            self.combo_audiobitrate.setCurrentText(a_bitrate_kbps)
+                # Werte in die GUI eintragen
+                self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
+                self._configure_bitrate_spin(v_bitrate_mbps)
+                self.spin_bitrate_val.setValue(v_bitrate_mbps)
+                self.combo_audiobitrate.setCurrentText(a_bitrate_kbps)
 
-            self._update_summary()
+                self._update_summary()
+        finally:
+            dialog.deleteLater()

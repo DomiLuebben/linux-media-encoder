@@ -768,7 +768,11 @@ class DiscRipperDialog(QDialog):
         if not out_dir:
             QMessageBox.warning(self, tr("Ungültiger Zielordner"), tr("Bitte gib einen gültigen Zielordner an."))
             return
-        os.makedirs(out_dir, exist_ok=True)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, tr("Ungültiger Zielordner"), str(exc))
+            return
 
         if self.radio_mode_iso.isChecked():
             self._start_iso_dump(out_dir)

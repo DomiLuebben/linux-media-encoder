@@ -1,5 +1,34 @@
 # Changelog — Linux Media Encoder
 
+## [1.12.8] — 2026-10-30
+
+### Behoben
+- Leere Encoder-Ausgaben ersetzen keine vorhandenen Ziele; abgeschlossene und
+  abgebrochene Worker können weder erneut starten noch später Dateien veröffentlichen.
+- Nichtendliche Schnitt-/Qualitätswerte werden verworfen; Restzeiten bleiben positiv
+  oder null. Quellgrößen mit ungeraden Kanten funktionieren mit 4:2:0-Encodern.
+- Vorschau-Dateien und Prozessobjekte werden beim Wechsel freigegeben; geschlossene
+  Dialoge starten keine verspäteten Vorschauen mehr. Modale Kinddialoge werden nach
+  der Auswertung freigegeben.
+- Blu-ray-Pfade funktionieren in Vorschau, Metadaten und Sitzungswiederherstellung.
+  Ungültige Sitzungseinträge werden übersprungen, Laufzeitstatus zurückgesetzt.
+- Direkte CD-/ISO-Rips melden Zielordnerfehler und ihren Abschluss nur einmal;
+  abgeschlossene CD-Prozesse werden bereits zwischen den Tracks freigegeben.
+
+### Performance
+- Gemeinsame Hintergrundwarteschlange mit höchstens vier gleichzeitigen
+  Metadatenanalysen statt eines Threads und ffprobe-Prozesses pro Job.
+- Encoderstart wartet nicht mehr synchron auf den Prozess. Eingebettete Cover
+  werden bei der Ermittlung der Videoauflösung übersprungen.
+
+### Prüfung
+- 21 neue Regressionstests; vollständiger Prüfeinstieg mit 335 Tests
+  (334 bestanden, ein bestehender Fixture-Test übersprungen), 19 Einzelmodulen
+  und UI-Aufbau erfolgreich. Arch-Paket gebaut, 22 Quelldateien im Paket bytegleich.
+- Details und Grenzen: `AUDIT_2026-10-30.md`. Keine neue Disc-Hardwareprüfung;
+  das Paket wird nicht automatisch installiert.
+
+
 ## [1.12.7] — 2026-10-15
 
 ### Hinzugefügt

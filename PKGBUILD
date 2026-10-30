@@ -1,7 +1,7 @@
 # Maintainer: Dominik Lübben <dominikluebben@googlemail.com>
 pkgname=linux-media-encoder
 # Version auch in version.py pflegen (Single Source für die App selbst)
-pkgver=1.12.7
+pkgver=1.12.8
 pkgrel=1
 pkgdesc="FFmpeg media encoder GUI inspired by Adobe Media Encoder (PyQt6)"
 arch=('any')
@@ -21,6 +21,7 @@ source=("main.py"
         "translations.py"
         "mainwindow.py"
         "ffmpeg_worker.py"
+        "media_probe.py"
         "presets.py"
         "crop_label.py"
         "intelligent_dialog.py"
@@ -40,20 +41,21 @@ source=("main.py"
 sha256sums=('c160ac9dc88b5cedd793a942d8551f22dfbc39b47ab4aa5fc13af708c3453dd8'
             '028689d75a0aa3d24f22a6c0be4902af8f687a82c80f9bda1a1fbe382e5bef73'
             '0cec309f21308feed72b6bfb2acc4dccde4d327a86ed14f72753e2dc62bcf387'
-            '04eb88f35ed9ec613e6a2e2127f61a3b5b04f949b4382111669d9c237c2c1718'
-            '80ca352756a5ba08e258a466161f4474b0a3dc2e6a1abe64d8a09e5e6ae4bc6a'
-            '1cab59e36a59c11d688172e511f047a7afb7a9a059f11730aa97b5ff828686d0'
+            '913c722e39d5048a9b9deb89998562223516b9175843e34de8816035b9e1b4ab'
+            '3f5afa3550f791c35b0ea956abab5f017e69b0cb65e5f836d7f492f5e8121016'
+            '849abc4e394ebd91c84f4c3be2815eea66767453e8815e8838b8f7c28c5bb7e8'
+            'a5fee945e65bce86d1d161264fd10d1396a44a314c1905c54f3dc52468fcdb12'
             '906d96391e5a6f5734dd3f5b946810e3d14cb551663bc75280a897a2825797c4'
             '44f20862702f228a0f19570911c124e2d72ed69348daa35b7f61ea23178c7341'
-            '008372b426ce496dfa79aa53c9df282677e73b1cf0dc537c20bc869f7409661a'
+            '71aac015741785d51e740b6cad3175673443db4f42fa2359207e6bf5f16ff992'
             '20d03f3bd868647e922ae6e2e3e5f4001bbc5e439c721339b1102a03a4256bc3'
             'a5ac2dbbf9fb3d8435f7cf4a2b59c579a1bd0fd036130c4f28f9ab87b12e0037'
             'b24b2d4be824a84bdfa5c73897b5b9b5d1b227c835bc85d14a3a366327564cf5'
             'eb75771edb53845cea484e0eafc9d7d2b6095eb2a1341a7fc441375277b5851c'
-            'd3cf7a7dafe8c5593fa396c93fa216d46252272d45a356f4d66598d8b8c58a9c'
-            '6adb6bc85dc65f49eaf4ea570426bf4c288a57ed0d0a6137dd34692aad64e636'
+            '4987b3cb72b772a762c7b57fe3963cfe0018ea90c87cc561ad44e1aa3571a3cc'
+            '69d131db1f6f059139223cfd5c99df7c5315a133e3400f66fa6807cad96c1757'
             '390273b23c29b01687683ca1bb8ac4c9e45d009e47e9092a85f17c068b59614c'
-            'a01c6863bc61f0664e8e251b89d6e6aa2b81ed5fe48bdd4dd56686accdc02f0a'
+            '8116ad5182c8d19f94dccf50dda9e8df9e4e8178f1580c88f21d2b38d9712f52'
             '24b6c858e70ed5678712b9deb5761b32a152016d4cf35e9bc2bb73bcf5dd09c3'
             '79fcb30bee3903bf1dffef7a8e84c9cd775fe2aa369e279f9cd2eb876c69f8b0'
             '1a0e84aa52709fee60ab7968746424456f595614325461214af36bab70574724'
@@ -64,7 +66,7 @@ package() {
     install -dm755 "$appdir"
 
     # Python-Quellen
-    for f in main.py i18n.py translations.py mainwindow.py ffmpeg_worker.py presets.py crop_label.py \
+    for f in main.py i18n.py translations.py mainwindow.py ffmpeg_worker.py media_probe.py presets.py crop_label.py \
              intelligent_dialog.py export_settings_dialog.py styles.py \
              subtitle_editor_dialog.py subtitle_utils.py optical_media.py disc_rip_worker.py disc_ripper_dialog.py dependency_installer.py version.py \
              sample_video_frame.png linux-media-encoder.svg; do

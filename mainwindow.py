@@ -1165,14 +1165,17 @@ class MainWindow(QMainWindow):
             
         from export_settings_dialog import ExportSettingsDialog
         dialog = ExportSettingsDialog(job["input_file"], job["output_file"], job["settings"], self)
-        if dialog.exec():
-            new_output_file, new_settings = dialog.get_results()
-            job["output_file"] = new_output_file
-            job["output_dir"] = os.path.dirname(new_output_file)
-            job["settings"] = new_settings
+        try:
+            if dialog.exec():
+                new_output_file, new_settings = dialog.get_results()
+                job["output_file"] = new_output_file
+                job["output_dir"] = os.path.dirname(new_output_file)
+                job["settings"] = new_settings
             
-            self._update_table_row(row)
-            self._load_job_settings_to_ui(job)
+                self._update_table_row(row)
+                self._load_job_settings_to_ui(job)
+        finally:
+            dialog.deleteLater()
 
     # --- SETTINGS LOGIK ---
     def _block_combobox_signals(self, block):
@@ -1768,7 +1771,7 @@ class MainWindow(QMainWindow):
             duration = 0.0
             try:
                 r = subprocess.run(
-                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                    ["ffprobe", "-v", "error", "-select_streams", "V:0",
                      "-show_entries", "stream=width,height:format=duration",
                      "-print_format", "json", path],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15,
@@ -1781,7 +1784,7 @@ class MainWindow(QMainWindow):
                         h = int(streams[0].get("height") or 0)
                         if w > 0 and h > 0:
                             size = (w, h)
-                    duration = float(data.get("format", {}).get("duration") or 0.0)
+                    duration = presets.parse_seconds(data.get("format", {}).get("duration")) or 0.0
             except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
                 pass
             # Nur einfache dict-Schreibzugriffe (GIL-sicher), keine Qt-Aufrufe
@@ -1789,8 +1792,8 @@ class MainWindow(QMainWindow):
             job["source_duration"] = duration
             job.pop("_probe_running", None)
 
-        import threading
-        threading.Thread(target=work, daemon=True, name="lme-ffprobe").start()
+        from media_probe import submit_probe
+        submit_probe(work)
 
     def _effective_aspect_source(self):
         """Maßgebliche Quellmaße für die Seitenverhältnis-Kopplung des selektierten
@@ -2087,12 +2090,15 @@ class MainWindow(QMainWindow):
                 
         from subtitle_editor_dialog import SubtitleEditorDialog
         dialog = SubtitleEditorDialog(job["input_file"], job["output_file"], src_lang, tr_lang, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            saved_path = dialog.get_saved_srt_path()
-            if saved_path:
-                self.edit_sub_file_path.setText(saved_path)
-                self.chk_subtitles.setChecked(True)
-                self._save_ui_settings_to_job()
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                saved_path = dialog.get_saved_srt_path()
+                if saved_path:
+                    self.edit_sub_file_path.setText(saved_path)
+                    self.chk_subtitles.setChecked(True)
+                    self._save_ui_settings_to_job()
+        finally:
+            dialog.deleteLater()
 
     def _configure_bitrate_spin(self, value=None):
         """Erlaubt bei Bedarf präzise Bitraten unterhalb von 0,1 Mbps."""
@@ -2270,8 +2276,11 @@ class MainWindow(QMainWindow):
         """Öffnet den CD/DVD/BD-Ripper-Dialog."""
         from disc_ripper_dialog import DiscRipperDialog
         dlg = DiscRipperDialog(initial_source=initial_source, parent=self)
-        dlg.jobs_queued.connect(self._on_disc_jobs_queued)
-        dlg.exec()
+        try:
+            dlg.jobs_queued.connect(self._on_disc_jobs_queued)
+            dlg.exec()
+        finally:
+            dlg.deleteLater()
 
     def _on_disc_jobs_queued(self, jobs_list):
         """Fügt vom DiscRipper übergebene Jobs in die Warteschlange ein."""
@@ -2644,13 +2653,21 @@ class MainWindow(QMainWindow):
             return
         restored = 0
         for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
             input_file = str(entry.get("input_file", "") or "")
-            if not input_file or (not os.path.exists(input_file) and not input_file.startswith("/dev/")):
+            local_path = input_file[7:] if input_file.startswith("bluray:") else input_file
+            if not input_file or (not os.path.exists(local_path) and not local_path.startswith("/dev/")):
                 continue
             settings = entry.get("settings")
             if not isinstance(settings, dict):
                 continue
+            settings = dict(settings)
+            for key in presets.TRANSIENT_SETTING_KEYS:
+                settings.pop(key, None)
             status = str(entry.get("status", "Bereit") or "Bereit")
+            if status not in ("Bereit", "Fertig", "Fehlgeschlagen", "Abgebrochen"):
+                status = "Bereit"
             job = {
                 "input_file": input_file,
                 "output_dir": entry.get("output_dir") or os.path.dirname(input_file),
@@ -3742,16 +3759,19 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QDialog
         from intelligent_dialog import IntelligentBitrateDialog
         dialog = IntelligentBitrateDialog(duration, codec, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            v_bitrate_mbps, a_bitrate_kbps = dialog.get_calculated_bitrates()
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                v_bitrate_mbps, a_bitrate_kbps = dialog.get_calculated_bitrates()
             
-            # Werte in die GUI eintragen
-            self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
-            self._configure_bitrate_spin(v_bitrate_mbps)
-            self.spin_bitrate_val.setValue(v_bitrate_mbps)
-            self.combo_audiobitrate.setCurrentText(a_bitrate_kbps)
+                # Werte in die GUI eintragen
+                self.combo_encoding.setCurrentText("VBR, 1 Durchgang")
+                self._configure_bitrate_spin(v_bitrate_mbps)
+                self.spin_bitrate_val.setValue(v_bitrate_mbps)
+                self.combo_audiobitrate.setCurrentText(a_bitrate_kbps)
 
-            self._save_ui_settings_to_job()
+                self._save_ui_settings_to_job()
+        finally:
+            dialog.deleteLater()
 
     def _on_toggle_ffmpeg_view(self, checked):
         """Blendet das FFmpeg-Log und die Befehlsvorschau ein/aus (Standard: aus)."""

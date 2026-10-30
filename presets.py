@@ -5,6 +5,7 @@ Definiert vordefinierte Profile und generiert die FFmpeg-Argumente.
 """
 
 import functools
+import math
 import re
 import subprocess
 
@@ -1051,8 +1052,7 @@ def _scale_bitrate(bitrate, factor):
 def _is_number(value):
     """True für int-/float-artige Strings ('23', '23.5'); FFmpeg akzeptiert beide als CRF."""
     try:
-        float(str(value).strip())
-        return True
+        return math.isfinite(float(str(value).strip()))
     except (TypeError, ValueError):
         return False
 
@@ -1065,7 +1065,7 @@ def parse_seconds(value):
         sec = float(value)
     except (TypeError, ValueError):
         return None
-    return sec if sec >= 0 else None
+    return sec if math.isfinite(sec) and sec >= 0 else None
 
 
 def _format_trim_seconds(sec):
@@ -1307,6 +1307,10 @@ def get_ffmpeg_args(input_file, output_file, settings):
                 if width and height:
                     vf_filters.append(build_scale_filter(width, height, scale_mode, even_dimensions=True))
 
+
+            # Auch bei Quellgröße brauchen 4:2:0-Codecs gerade Kantenlängen.
+            if scale_mode == SCALE_MODE_SOURCE and (v_codec in ("libx264", "libx265") or v_codec in NVENC_CODECS):
+                vf_filters.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
 
             # Framerate ist von der Skalierung unabhängig; leer / "Wie Quelle"
             # bedeutet: Quell-Framerate unverändert lassen (kein -r).

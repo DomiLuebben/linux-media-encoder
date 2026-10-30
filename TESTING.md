@@ -27,3 +27,10 @@ sind eigene Schritte.
 
 Die lokalen Tests ersetzen keinen vollständigen Hardware-Rip, keine Abnahme
 verschlüsselter/beschädigter Discs und keinen Test der externen KI-Dienste.
+
+`test_audit_20261030.py` ergänzt 21 Prüfungen für Prozess- und Dialoglebensdauer,
+Vorschau-Aufräumen, begrenzte Metadatenparallelität, Dateisicherheit, Sitzung,
+ungültige Schnittwerte, ungerade Videoauflösungen und CD-/ISO-Fehler. Vorschau,
+Video und CD-Encodierung laufen dabei mit echtem FFmpeg; das physische CD-Lesen
+wird durch lokale Dateikopien ersetzt. Eine alte optische Prüfung benötigt
+eine nicht mitgelieferte ffprobe-Fixture und wird ausdrücklich übersprungen.
